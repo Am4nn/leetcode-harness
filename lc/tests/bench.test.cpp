@@ -76,6 +76,7 @@ struct Rec {
         return s;
     }
     int maxDepth(TreeNode* root) { return root ? 1 + max(maxDepth(root->left), maxDepth(root->right)) : 0; }
+    int words(vector<string>& w) { recorded = lc::show(w); return 0; }
 };
 
 namespace fs = std::filesystem;
@@ -375,6 +376,23 @@ int main(int, char** argv) {
         bool named = true;
         for (auto& c : cases) named = named && c.ops.starts_with("[\"RealName\",");
         CHECK(named);
+    }
+
+    // R36: a vector<string> size parameter's n is its number of strings (LeetCode's words.length), the
+    // unit of its len_max; gen --n N reproduces bench's input at that n (R14).
+    {
+        const string spec = "size w\nparam w len 1 64 chars ab\n";
+        auto r = run("bench", spec, {"--seed", "5", "--max-ms", "2000"}, fn(&Rec::words, {"w"}));
+        auto s = size_lines(r);
+        CHECK(s.size() >= 3);
+        CHECK(strictly_increasing(s));
+        if (!s.empty()) CHECK_EQ(num(s.back(), "n"), 64.0);
+        CHECK(!r.empty() && has(r.back(), "\"alloc\":{") && num(r.back(), "n") == 64.0);
+        string bench_input = recorded;
+        CHECK_EQ(lc::parse<vector<string>>(bench_input).size(), 64u);
+        run("gen", spec, {"--count", "1", "--n", "64", "--seed", "5"}, fn(&Rec::words, {"w"}));
+        auto cases = lc::read_cases(last_out().string());
+        CHECK(cases.size() == 1 && cases[0].args.size() == 1 && cases[0].args[0] == bench_input);
     }
 
     // R16: a 2-D size parameter runs up to len_max x len_max cells, and reports cells.

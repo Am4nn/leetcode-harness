@@ -243,14 +243,15 @@ inline constexpr long long node_budget = 2000000;
 // ask for 10^10 cells and run out of memory.
 inline constexpr long long grid_max_cells = 10000000;
 
-// The size bench reports for a generated size parameter: a size scalar's value; the total items of a
-// vector of containers (a grid's cells, a word list's characters); else the length or node count.
-// Other types report the requested n.
+// The size bench reports for a generated size parameter: a size scalar's value; a word list's number of
+// strings (R36: the unit of its words.length constraint); the total items of other vectors of containers
+// (a grid's cells); else the length or node count. Other types report the requested n.
 template <class T> long long actual_size(const T& v, long long n) {
     if constexpr (is_size_scalar_v<T>) {
         return (long long)v;
     } else if constexpr (is_vector_v<T>) {
-        if constexpr (is_generated_container<typename T::value_type>::value) {
+        if constexpr (!std::is_same_v<typename T::value_type, std::string> &&
+                      is_generated_container<typename T::value_type>::value) {
             long long s = 0;
             for (const auto& x : v) s += length_of(x);
             return s;

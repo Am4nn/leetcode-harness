@@ -106,4 +106,7 @@
     $gi = Get-LcInfoFromMeta '{"name":"f","params":[{"name":"grid","type":"integer[][]"}],"return":{"type":"integer"}}'
     Assert-Equal (ConvertTo-LcSpec -Constraints @('1 <= grid.length <= 10^5') -Info $gi).MaxN 10000000
     Assert-Equal (ConvertTo-LcSpec -Constraints @() -Info $gi).MaxN 10000000
+    # R36: a word list's size is its number of strings, as bench reports it.
+    $wi = Get-LcInfoFromMeta '{"name":"f","params":[{"name":"words","type":"string[]"}],"return":{"type":"integer"}}'
+    Assert-Equal (ConvertTo-LcSpec -Constraints @('1 <= words.length <= 5000') -Info $wi).MaxN 5000
 }

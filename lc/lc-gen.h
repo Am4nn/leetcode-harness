@@ -162,9 +162,14 @@ template <class E> std::vector<E> gen_seq(const ParamSpec& p, long long len, std
 
 }  // namespace detail
 
+// The length of each string in a generated vector<string> (the constraints' words[i].length isn't parsed).
+inline constexpr long long string_item_len = 16;
+
 // One random value of type T for parameter spec `p` at size n.
 //  - vectors, strings, trees, lists: clamp(n, len_min, len_max) items/nodes
-//  - vectors of containers (2-D): ceil(sqrt(n)) rows, each generated at size ceil(sqrt(n))
+//  - vectors of strings: clamp(n, len_min, len_max) strings (the size is the count, as in LeetCode's
+//    words.length; R36), each clamp(string_item_len, len_min, len_max) characters
+//  - other vectors of containers (2-D): ceil(sqrt(n)) rows, each generated at size ceil(sqrt(n))
 //  - scalars: uniform in [val_min, val_max]; defaults int +-1e9, long long +-1e18, double +-1e4,
 //    chars a-z, tree/list values +-1e4
 template <class T> T generate(const ParamSpec& p, long long n, std::mt19937_64& rng) {
@@ -178,7 +183,11 @@ template <class T> T generate(const ParamSpec& p, long long n, std::mt19937_64& 
         return std::string(v.begin(), v.end());
     } else if constexpr (is_vector_v<T>) {
         using U = typename T::value_type;
-        if constexpr (is_generated_container<U>::value) {
+        if constexpr (std::is_same_v<U, std::string>) {
+            T v;
+            for (long long i = detail::clamp_len(p, n); i > 0; --i) v.push_back(generate<U>(p, string_item_len, rng));
+            return v;
+        } else if constexpr (is_generated_container<U>::value) {
             long long side = detail::ceil_sqrt(n);
             T v;
             for (long long i = detail::clamp_len(p, side); i > 0; --i) v.push_back(generate<U>(p, side, rng));

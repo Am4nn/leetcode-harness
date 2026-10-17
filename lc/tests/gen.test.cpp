@@ -96,7 +96,10 @@ int main(int, char** argv) {
         for (auto& r : g) if (r.size() != 4) ok = false;
         CHECK(ok);
         CHECK_EQ(generate<vector<vector<int>>>(ParamSpec{}, 16, rng).size(), 4u);
-        CHECK_EQ(generate<vector<string>>(ParamSpec{}, 9, rng).size(), 3u);
+        // R36: a vector of strings has n strings (its size is its length), each 16 characters.
+        auto w = generate<vector<string>>(ParamSpec{}, 9, rng);
+        CHECK_EQ(w.size(), 9u);
+        CHECK(!w.empty() && w[0].size() == 16u);
         CHECK_EQ(generate<vector<vector<char>>>(ParamSpec{}, 25, rng).at(4).size(), 5u);
         CHECK_EQ(generate<vector<ListNode*>>(ParamSpec{}, 4, rng).size(), 2u);
         CHECK_EQ(generate<vector<bool>>(ParamSpec{}, 6, rng).size(), 6u);
