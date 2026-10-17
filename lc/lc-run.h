@@ -112,14 +112,14 @@ struct Cli {
     bool any_order = false;
     unsigned long long seed = 0;
     double max_ms = 0;
-    long long count = 0, max_n = 0;
+    long long count = 0, max_n = 0, n = 0;  // gen: n > 0 fixes every case's size (--n), else uniform in [1, max_n]
 };
 
 // Parses the runner CLI (see formats.md). Returns 0, or the exit code after printing the problem.
 inline int parse_cli(int argc, char** argv, Cli& cli) {
     static const std::string test_use = "test <cases> <results> [--any-order]",
                              bench_use = "bench <spec> <results> --seed S --max-ms M",
-                             gen_use = "gen <spec> <out-cases> --count C --max-n N --seed S";
+                             gen_use = "gen <spec> <out-cases> --count C (--max-n N | --n N) --seed S";
     auto usage = [](const std::string& text) {
         std::cerr << "usage: " << text << '\n';
         return 2;
@@ -154,10 +154,12 @@ inline int parse_cli(int argc, char** argv, Cli& cli) {
         else if (bench && k == "--max-ms") ok = number(cli.max_ms) && cli.max_ms > 0;
         else if (!bench && k == "--count") ok = number(cli.count) && cli.count >= 0;
         else if (!bench && k == "--max-n") ok = number(cli.max_n) && cli.max_n >= 1;
+        else if (!bench && k == "--n") ok = number(cli.n) && cli.n >= 1;
         if (!ok || !seen.insert(k).second) return usage(use);
     }
-    if (seen.size() != (bench ? 2u : 3u)) return usage(use);
-    return 0;
+    bool complete = seen.count("--seed") && (bench ? seen.count("--max-ms") > 0
+                                                   : seen.count("--count") && (seen.count("--max-n") || seen.count("--n")));
+    return complete ? 0 : usage(use);
 }
 
 // ---- bench and gen helpers ----
@@ -233,6 +235,53 @@ inline bool load_spec(const Cli& cli, Spec& spec) {
 // so a sequence of n calls stays O(n) to build.
 inline constexpr long long design_arg_n = 16;
 
+// Tree/list copies made for timing are never freed (user code may restructure or free nodes), so reps per
+// size are capped to keep the generated nodes per size within this budget (ruling R17).
+inline constexpr long long node_budget = 2000000;
+
+// A 2-D size parameter's maxN (len_max^2 cells, R16) is capped here so a loose row limit like 10^5 can't
+// ask for 10^10 cells and run out of memory.
+inline constexpr long long grid_max_cells = 10000000;
+
+// The size bench reports for a generated size parameter: a size scalar's value; the total items of a
+// vector of containers (a grid's cells, a word list's characters); else the length or node count.
+// Other types report the requested n.
+template <class T> long long actual_size(const T& v, long long n) {
+    if constexpr (is_size_scalar_v<T>) {
+        return (long long)v;
+    } else if constexpr (is_vector_v<T>) {
+        if constexpr (is_generated_container<typename T::value_type>::value) {
+            long long s = 0;
+            for (const auto& x : v) s += length_of(x);
+            return s;
+        } else {
+            return (long long)v.size();
+        }
+    } else if constexpr (is_generated_container<T>::value) {
+        return length_of(v);
+    } else {
+        (void)v;
+        return n;
+    }
+}
+
+// Tree and list nodes in generated arguments (a value or a tuple of them).
+template <class T> long long nodes_in(const T& v) {
+    if constexpr (std::is_same_v<T, TreeNode*> || std::is_same_v<T, ListNode*>) {
+        return length_of(v);
+    } else if constexpr (is_tuple<T>::value) {
+        return std::apply([](const auto&... x) { return (0LL + ... + nodes_in(x)); }, v);
+    } else if constexpr (is_vector_v<T>) {
+        long long s = 0;
+        if constexpr (std::is_pointer_v<typename T::value_type> || is_vector_v<typename T::value_type>)
+            for (const auto& x : v) s += nodes_in(x);
+        return s;
+    } else {
+        (void)v;
+        return 0;
+    }
+}
+
 // Bench sizes, ascending: maxN, maxN/2, ... down to >= 8, at most 10. For a scalar size parameter with
 // maxN <= 64: up to 10 evenly spaced sizes from max(1, maxN/10) to maxN (ruling R5).
 inline std::vector<long long> bench_sizes(long long max_n, bool scalar) {
@@ -251,10 +300,18 @@ inline std::vector<long long> bench_sizes(long long max_n, bool scalar) {
     return v;
 }
 
-// Runs bench over `sizes` and writes the results lines. `prepare(n)` sets up one size and returns
-// `once(AllocStats*) -> ms`, which runs one timed call (or design sequence) on fresh inputs. Given an
-// AllocStats, `once` resets the stats right before the timed part and fills count/bytes since then and
-// peak above the live bytes at the reset.
+// One prepared bench size. `n` is the generated input's actual size (what the results report), `max_reps`
+// the rep limit, and `once(AllocStats*) -> ms` runs one timed call (or design sequence) on fresh inputs.
+// Given an AllocStats, `once` resets the stats right before the timed part and fills count/bytes since
+// then and peak above the live bytes at the reset.
+template <class F> struct BenchSize {
+    long long n;
+    int max_reps;
+    F once;
+};
+
+// Runs bench over the schedule `sizes` and writes the results lines. `prepare(n)` returns a BenchSize.
+// A size whose actual n is not above the previous one is skipped (ruling R19).
 template <class Prepare> int bench_loop(const Cli& cli, const std::vector<long long>& sizes, bool design, Prepare prepare) {
     std::ofstream out(cli.out, std::ios::binary);
     if (!out) {
@@ -269,9 +326,13 @@ template <class Prepare> int bench_loop(const Cli& cli, const std::vector<long l
             << (predicted ? ",\"predicted\":true" : "") << "}\n" << std::flush;
     };
     std::vector<std::pair<long long, double>> done;  // completed sizes and their min ms
+    std::optional<decltype(prepare(0LL))> last;       // the largest completed size, for the alloc run
     long long cur = 0;
     try {
-        for (long long n : sizes) {
+        for (long long sched : sizes) {
+            auto size = prepare(sched);
+            long long n = size.n;
+            if (n < 1 || (!done.empty() && n <= done.back().first)) continue;
             cur = n;
             if (done.size() >= 2) {
                 auto [n1, t1] = done[done.size() - 2];
@@ -282,27 +343,27 @@ template <class Prepare> int bench_loop(const Cli& cli, const std::vector<long l
                 }
             }
             out << "{\"status\":\"start\",\"n\":" << n << ",\"seed\":" << cli.seed << "}\n" << std::flush;
-            auto once = prepare(n);
             double best = 0, total = 0;
             int reps = 0;
             bool over = false;
             while (true) {
-                double t = once(nullptr);
+                double t = size.once(nullptr);
                 best = reps ? std::min(best, t) : t;
                 total += t;
                 ++reps;
                 if (reps == 1 && t > cli.max_ms) { over = true; break; }
-                if (total >= 30 || reps >= 50) break;
+                if (total >= 30 || reps >= size.max_reps) break;
             }
             if (over) { capped(n, best, false); break; }
             out << "{\"n\":" << n << ",\"ms\":" << num_text(best) << ",\"reps\":" << reps << per_call(n, best) << "}\n"
                 << std::flush;
             done.push_back({n, best});
+            last.emplace(std::move(size));
         }
-        if (!done.empty()) {
-            cur = done.back().first;
+        if (last) {
+            cur = last->n;
             AllocStats a{};
-            prepare(cur)(&a);
+            last->once(&a);
             out << "{\"alloc\":{\"count\":" << a.count << ",\"bytes\":" << a.bytes << ",\"peak\":" << a.peak
                 << "},\"n\":" << cur << "}\n";
         }
@@ -343,20 +404,45 @@ int bench_function(const Cli& cli, M method, const std::vector<std::string>& nam
     if (!load_spec(cli, spec)) return 2;
     using Args = std::tuple<std::remove_cvref_t<A>...>;
     using Seq = std::index_sequence_for<A...>;
-    bool scalar = false;
+
+    // The size parameter decides the schedule: maxN is val_max for a scalar, len_max^2 cells for a 2-D
+    // vector (R16), else len_max; sizes below its minimum are dropped (R19).
+    int size_i = -1;
+    bool scalar = false, grid = false;
     [&]<size_t... I>(std::index_sequence<I...>) {
-        ((scalar = scalar || (I < names.size() && names[I] == spec.size &&
-                              is_size_scalar_v<std::tuple_element_t<I, Args>>)), ...);
+        auto one = [&]<size_t J>(std::integral_constant<size_t, J>) {
+            using T = std::tuple_element_t<J, Args>;
+            if (size_i >= 0 || J >= names.size() || names[J] != spec.size) return;
+            size_i = (int)J;
+            scalar = is_size_scalar_v<T>;
+            if constexpr (is_vector_v<T>) grid = is_vector_v<typename T::value_type>;
+        };
+        (one(std::integral_constant<size_t, I>{}), ...);
     }(Seq{});
-    long long max_n = 100000;
-    if (auto it = spec.params.find(spec.size); !spec.size.empty() && it != spec.params.end()) {
-        const auto& lim = scalar ? it->second.val_max : it->second.len_max;
-        if (lim) max_n = *lim;
+    ParamSpec p;
+    if (auto it = spec.params.find(spec.size); size_i >= 0 && it != spec.params.end()) p = it->second;
+    const auto& lim_max = scalar ? p.val_max : p.len_max;
+    const auto& lim_min = scalar ? p.val_min : p.len_min;
+    long long max_n = lim_max.value_or(100000), min_n = lim_min.value_or(1);
+    if (grid) {
+        max_n = lim_max ? std::min(*lim_max * *lim_max, grid_max_cells) : 100000;
+        min_n = std::min(min_n * min_n, max_n);
     }
+    std::vector<long long> sizes;
+    for (long long n : bench_sizes(max_n, scalar))
+        if (n >= min_n) sizes.push_back(n);
+    if (sizes.empty()) sizes.push_back(std::max(max_n, 1LL));
+
     auto prepare = [&](long long n) {
         std::mt19937_64 rng(cli.seed);
         Args args = generate_args<std::remove_cvref_t<A>...>(spec, names, n, rng);
-        return [method, args = std::move(args)](AllocStats* alloc) -> double {
+        long long actual = n;
+        [&]<size_t... I>(std::index_sequence<I...>) {
+            ((I == (size_t)size_i ? (void)(actual = actual_size(std::get<I>(args), n)) : void()), ...);
+        }(Seq{});
+        long long nodes = nodes_in(args);
+        int max_reps = nodes ? (int)std::clamp(node_budget / nodes - 1, 1LL, 50LL) : 50;
+        return BenchSize{actual, max_reps, [method, args = std::move(args)](AllocStats* alloc) -> double {
             Args a = clone(args);
             S sol;
             Stopwatch w{alloc};
@@ -378,9 +464,9 @@ int bench_function(const Cli& cli, M method, const std::vector<std::string>& nam
                 keep(got);
                 return w.stop();
             }
-        };
+        }};
     };
-    return bench_loop(cli, bench_sizes(max_n, scalar), false, prepare);
+    return bench_loop(cli, sizes, false, prepare);
 }
 
 // Opens the gen output; on failure prints the problem.
@@ -393,11 +479,13 @@ inline bool open_cases_out(const Cli& cli, std::ofstream& out) {
 // The size n of each gen case, uniform in [1, max-n], drawn from a generator of their own. Case i's values
 // then come from a generator seeded with just seed + i, as bench's do from its seed, so at the same size
 // and seed both produce the same input.
+// With --n, every case uses exactly that n (R14), so `gen --count 1 --n N --seed S` reproduces bench's input
+// at size N and seed S.
 inline std::vector<long long> gen_sizes(const Cli& cli) {
     std::mt19937_64 pick(cli.seed ^ 0x9E3779B97F4A7C15ULL);
-    std::uniform_int_distribution<long long> dist(1, cli.max_n);
+    std::uniform_int_distribution<long long> dist(1, std::max(cli.max_n, 1LL));
     std::vector<long long> v;
-    for (long long i = 0; i < cli.count; ++i) v.push_back(dist(pick));
+    for (long long i = 0; i < cli.count; ++i) v.push_back(cli.n > 0 ? cli.n : dist(pick));
     return v;
 }
 
@@ -571,6 +659,7 @@ template <class Tuple> Tuple parse_args(const std::vector<std::string>& texts, c
 
 template <class C> struct Method {
     std::vector<std::string> names;
+    size_t arity = 0;  // number of parameters
     // Returns show(result), or "null" for void.
     std::function<std::string(C&, const std::vector<std::string>& args)> call;
     // Parses both texts into the return type and compares them.
@@ -585,6 +674,7 @@ namespace detail {
 template <class C, class R, class M, class... A> Method<C> make_method(M m, std::vector<std::string> names) {
     Method<C> mt;
     mt.names = names;
+    mt.arity = sizeof...(A);
     mt.call = [m, names](C& obj, const std::vector<std::string>& texts) -> std::string {
         using Args = std::tuple<std::remove_cvref_t<A>...>;
         Args args = parse_args<Args>(texts, names);
@@ -642,9 +732,11 @@ template <class C> std::string class_name() {
 
 template <class C> using MethodList = std::vector<std::pair<std::string, const Method<C>*>>;
 
-// One random design sequence at n calls: constructor arguments, then n uniformly random methods with
-// random arguments. Fills `ops`/`args_text` (cases format) when given. Bench and gen share it, so a
-// seed gives the same sequence in both.
+// One random design sequence at n calls: constructor arguments, then n random methods with random
+// arguments. The first half (rounded up) of the calls only use methods that take arguments (the "adders",
+// e.g. push/put/addNum), so methods like pop/top/findMedian never meet an empty object; the rest pick
+// uniformly from all methods (ruling R18). Fills `ops`/`args_text` (cases format) when given. Bench and
+// gen share it, so a seed gives the same sequence in both.
 template <class C, class... CtorA>
 std::tuple<std::remove_cvref_t<CtorA>...> random_sequence(const Spec& spec, const std::vector<std::string>& ctor_names,
                                                          const MethodList<C>& ms, long long n, std::mt19937_64& rng,
@@ -654,9 +746,14 @@ std::tuple<std::remove_cvref_t<CtorA>...> random_sequence(const Spec& spec, cons
     if (args_text) *args_text = "[" + show_tuple(ct);
     calls.clear();
     calls.reserve(ms.empty() ? 0 : (size_t)n);
+    std::vector<size_t> adders;
+    for (size_t j = 0; j < ms.size(); ++j)
+        if (ms[j].second->arity > 0) adders.push_back(j);
     std::string t;
     for (long long k = 0; k < n && !ms.empty(); ++k) {
-        const auto& [name, mt] = ms[std::uniform_int_distribution<size_t>(0, ms.size() - 1)(rng)];
+        bool add = k < (n + 1) / 2 && !adders.empty();
+        size_t pick = std::uniform_int_distribution<size_t>(0, (add ? adders.size() : ms.size()) - 1)(rng);
+        const auto& [name, mt] = ms[add ? adders[pick] : pick];
         calls.push_back(mt->random(spec, design_arg_n, rng, args_text ? &t : nullptr));
         if (ops) ops->push_back(name);
         if (args_text) *args_text += "," + t;
@@ -671,7 +768,7 @@ int bench_design(const Cli& cli, const std::vector<std::string>& ctor_names, con
     if (!load_spec(cli, spec)) return 2;
     auto prepare = [&](long long n) {
         // The sequence is rebuilt from the seed for every run (untimed), so each run gets fresh arguments.
-        return [&, n](AllocStats* alloc) -> double {
+        return BenchSize{n, 50, [&, n](AllocStats* alloc) -> double {
             std::mt19937_64 rng(cli.seed);
             std::vector<std::function<void(C&)>> calls;
             auto ct = random_sequence<C, CtorA...>(spec, ctor_names, ms, n, rng, calls, nullptr, nullptr);
@@ -683,7 +780,7 @@ int bench_design(const Cli& cli, const std::vector<std::string>& ctor_names, con
             for (auto& f : calls) f(*obj);
             keep(obj);
             return w.stop();
-        };
+        }};
     };
     return bench_loop(cli, bench_sizes(spec.calls.value_or(100000), false), true, prepare);
 }
