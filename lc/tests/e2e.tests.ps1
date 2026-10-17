@@ -336,7 +336,7 @@
         $outLines = @($r.Out.TrimEnd() -split '\r?\n')
         Assert-Equal $outLines.Count 4 "e2e: analyze output lines`n$($r.Out)"
         Assert-Match $outLines[0] '^Complexity: looks O\(n( log n)?\) \(random inputs; worst case may differ\)$'
-        Assert-Match $outLines[1] '^  n=\d+ [0-9.]+ ms( \| n=\d+ [0-9.]+ m?s)+$'
+        Assert-Match $outLines[1] '^  n=\d+ [0-9.]+ [mu]?s( \| n=\d+ [0-9.]+ [mu]?s)+$'
         Assert-Match $outLines[2] '^At n = 10000: est\. [0-9.]+ ms -> ok$'
         Assert-Match $outLines[3] '^Allocations at n=10000: \d+ allocs, [0-9.]+ [KM]?B total, peak [0-9.]+ [KM]?B$'
         # R40: no Calls line when every function ran once; the event still has the counts
@@ -351,8 +351,9 @@
         # Task 12: call counts and recursion depth (profile build) at the largest size timed under 20 ms (R38)
         Assert-True ($r.Out -match '(?m)^Calls \(n=(\d+)\): climbStairs: [0-9,]+ calls, max depth \d+\s*$') "e2e: climbing-stairs Calls line`n$($r.Out)"
         $callsN = [long]$Matches[1]
-        $under = @([regex]::Matches($r.Out, 'n=(\d+) ([0-9.]+) ms') |
-            Where-Object { [double]::Parse($_.Groups[2].Value, [Globalization.CultureInfo]::InvariantCulture) -lt 20 } | ForEach-Object { [long]$_.Groups[1].Value })
+        # Durations under 0.01 ms print in us; both count as under 20 ms.
+        $under = @([regex]::Matches($r.Out, 'n=(\d+) ([0-9.]+) (ms|us)') |
+            Where-Object { $_.Groups[3].Value -eq 'us' -or [double]::Parse($_.Groups[2].Value, [Globalization.CultureInfo]::InvariantCulture) -lt 20 } | ForEach-Object { [long]$_.Groups[1].Value })
         Assert-Equal $callsN ($under | Measure-Object -Maximum).Maximum "e2e: Calls n is the largest size under 20 ms`n$($r.Out)"
         $a = @(Read-LcEvents $journey | Where-Object { $_.event -eq 'analyze_run' })[-1]
         Assert-True ($a.calls.climbStairs.count -gt 1000 -and $a.calls.climbStairs.depth -gt 10) "e2e: analyze_run calls $($a | ConvertTo-Json -Compress)"

@@ -171,7 +171,8 @@ function Get-LcComplexityShape([string]$label, [double]$n) {
 
 function Get-LcComplexity {
     param($Points)
-    $pts = @(@($Points) | Where-Object { $_.ms -ge 0.05 })
+    # Noise floor: 0.002 ms, 20 ticks of the 100 ns timer.
+    $pts = @(@($Points) | Where-Object { $_.ms -ge 0.002 })
     if ($pts.Count -lt 3) { return [pscustomobject]@{ Label = 'too fast to measure'; Coef = 0.0; TooFast = $true } }
     $maxN = ($pts | ForEach-Object { [double]$_.n } | Measure-Object -Maximum).Maximum
     $labels = @('O(1)', 'O(log n)', 'O(n)', 'O(n log n)', 'O(n^2)', 'O(n^3)')
@@ -248,7 +249,8 @@ function Format-LcDuration([double]$Ms) {
     if ($Ms -ge 1000) { return ($Ms / 1000).ToString('0.0', $inv) + ' s' }
     if ($Ms -ge 100) { return $Ms.ToString('0', $inv) + ' ms' }
     if ($Ms -ge 10) { return $Ms.ToString('0.0', $inv) + ' ms' }
-    return $Ms.ToString('0.00', $inv) + ' ms'
+    if ($Ms -ge 0.01) { return $Ms.ToString('0.00', $inv) + ' ms' }
+    return ($Ms * 1000).ToString('0.0', $inv) + ' us'
 }
 
 function Format-LcPerCallUs([double]$Us) {
