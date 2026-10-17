@@ -137,8 +137,10 @@ function Wait-LcGpp($job) {
 # Builds <build root>/lc/<slug>-<hash>/<Name>.exe (Name defaults to the flavor) from the harness and user texts.
 # Each object is compiled only when its stamp changed (harness: text + flags + lc-all.h.gch time;
 # user: text + solution + flags + lc-prelude.h.gch time); the exe is relinked when either object changed.
-# Returns @{ Ok; Exe; Ms; Skipped; Errors; Stage }. On failure Errors is g++'s output (warnings included)
+# Returns @{ Ok; Exe; Ms; Skipped; Errors; Stage; Warnings }. On failure Errors is g++'s output (warnings included)
 # and Stage says which step failed: 'harness' (also for the unsupported-type static_assert), 'user' or 'link'.
+# On success Warnings is what g++ printed for the user TU ('' when nothing), kept in <Name>-user.warn so a
+# rerun that skips the compile still has it.
 function Build-LcExe {
     param(
         [Parameter(Mandatory)][string]$SrcPath,
@@ -151,7 +153,7 @@ function Build-LcExe {
     $dir = Get-LcBuildDir $SrcPath
     New-Item -ItemType Directory -Force $dir | Out-Null
     $exe = Join-Path $dir "$Name.exe"
-    $fail = @{ Ok = $false; Exe = $exe; Ms = 0; Skipped = $false; Errors = ''; Stage = '' }
+    $fail = @{ Ok = $false; Exe = $exe; Ms = 0; Skipped = $false; Errors = ''; Stage = ''; Warnings = '' }
     try {
         $pch = Initialize-LcPch -Flavor $Flavor
         $userPch = Initialize-LcUserPch -Flavor $Flavor
@@ -177,7 +179,11 @@ function Build-LcExe {
         $t.Obj = "$base.o"
         $t.StampPath = "$base.stamp"
         $t.Hash = Get-LcTextHash $t.Stamp
-        if ((Test-Path -LiteralPath $t.Obj) -and (Read-LcStamp $t.StampPath) -eq $t.Hash) { continue }
+        # The user TU keeps g++'s output (empty when none) next to its stamp; an object without it (an older
+        # cache) is rebuilt.
+        if ($t.Stage -eq 'user') { $t.Warn = "$base.warn" }
+        if ((Test-Path -LiteralPath $t.Obj) -and (Read-LcStamp $t.StampPath) -eq $t.Hash -and
+            (-not $t.Warn -or (Test-Path -LiteralPath $t.Warn))) { continue }
         [IO.File]::WriteAllText("$base.cpp", $t.Text, $utf8)
         Remove-Item -LiteralPath $t.StampPath -ErrorAction SilentlyContinue
         $t.Job = Start-LcGpp (@($t.Flags) + @('-c', "$base.cpp", '-o', $t.Obj))
@@ -185,10 +191,12 @@ function Build-LcExe {
     foreach ($t in $parts) {
         if (-not $t.Job) { continue }
         $t.Result = Wait-LcGpp $t.Job
-        if ($t.Result.Ok) { [IO.File]::WriteAllText($t.StampPath, $t.Hash, $utf8) }
+        if (-not $t.Result.Ok) { continue }
+        [IO.File]::WriteAllText($t.StampPath, $t.Hash, $utf8)
+        if ($t.Warn) { [IO.File]::WriteAllText($t.Warn, $t.Result.Text, $utf8) }
     }
-    # The unsupported-type message comes first, then the user's own errors, then anything else.
     $h = $parts[0]; $u = $parts[1]
+    # The unsupported-type message comes first, then the user's own errors, then anything else.
     $failed = $null
     if ($h.Result -and -not $h.Result.Ok -and $h.Result.Text -match 'lc: unsupported parameter type') { $failed = $h }
     elseif ($u.Result -and -not $u.Result.Ok) { $failed = $u }
@@ -200,11 +208,12 @@ function Build-LcExe {
         return $fail
     }
 
+    $warnings = Read-LcStamp $u.Warn
     $linkStampPath = Join-Path $dir "$Name.stamp"
     $linkFlags = Get-LcLinkFlags $flags
     $linkStamp = Get-LcTextHash ($h.Hash + "`n" + $u.Hash + "`n" + ($linkFlags -join ' '))
     if ((Test-Path -LiteralPath $exe) -and (Read-LcStamp $linkStampPath) -eq $linkStamp) {
-        return @{ Ok = $true; Exe = $exe; Ms = 0; Skipped = $true; Errors = ''; Stage = '' }
+        return @{ Ok = $true; Exe = $exe; Ms = 0; Skipped = $true; Errors = ''; Stage = ''; Warnings = $warnings }
     }
     Remove-Item -LiteralPath $linkStampPath -ErrorAction SilentlyContinue
     $link = Wait-LcGpp (Start-LcGpp (@($linkFlags) + @($h.Obj, $u.Obj, '-o', $exe)))
@@ -216,5 +225,5 @@ function Build-LcExe {
         return $fail
     }
     [IO.File]::WriteAllText($linkStampPath, $linkStamp, $utf8)
-    return @{ Ok = $true; Exe = $exe; Ms = $sw.ElapsedMilliseconds; Skipped = $false; Errors = ''; Stage = '' }
+    return @{ Ok = $true; Exe = $exe; Ms = $sw.ElapsedMilliseconds; Skipped = $false; Errors = ''; Stage = ''; Warnings = $warnings }
 }

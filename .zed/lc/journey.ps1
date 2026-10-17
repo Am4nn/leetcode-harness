@@ -116,7 +116,7 @@ function Get-LcJourneyState($Events) {
         switch ([string]$e.event) {
             'test_run'    { $r.Runs++; $r.Since++ }
             'solved'      { $r.Since = 0; if ($null -eq $r.Solved) { $r.Solved = $e } }
-            'analyze_run' { $r.Cx = [string]$e.complexity }
+            'analyze_run' { if ($e.complexity) { $r.Cx = [string]$e.complexity } }  # a failed analyze has none
             'note'        { $r.Note = [string]$e.text }
             'fetch'       { if ($e.ok -eq $true) { $r.Fetch = $e } }
         }

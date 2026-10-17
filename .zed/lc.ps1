@@ -65,6 +65,7 @@ function Complete-LcJourney([int]$code) {
         printed = @($cases | Where-Object { $_.status -eq 'print' }).Count
     }
     if ($r.Crash) { $data.crash = $r.Crash }
+    if ($mismatch) { $data.mismatch = $true }  # the solution's method isn't the problem's
     Add-LcEvent 'test_run' $data
     [void](Save-LcSnapshot -Root $JourneyRoot -Slug $slug -SrcPath $src -SrcHash $srcHash)
     $solved = $false
@@ -115,8 +116,14 @@ function Write-LcBuildFailure($build) {
     if ($t) {
         Write-Host "This problem uses a parameter type the harness doesn't support yet: $t" -ForegroundColor Red
     } else {
-        Write-Host $build.Errors
+        Write-Host (Remove-LcUserTuLines $build.Errors)
     }
+}
+
+# g++'s output without "In file included from <build dir>\<name>-user.cpp:1:": the generated user TU
+# only includes the solution, so that line names a build file and nothing of the user's.
+function Remove-LcUserTuLines([string]$Text) {
+    return (@($Text -split '\r?\n' | Where-Object { $_ -notmatch '^In file included from .*-user\.cpp:\d+[:,]$' }) -join "`n")
 }
 
 function Exit-Lc([int]$code) {
@@ -211,8 +218,27 @@ if ($Mode -eq 'analyze') {
     $spec = ConvertTo-LcSpec -Constraints $constraints -Info $info
     $harnessText = New-LcHarnessText -Info $info
     $userText = New-LcUserText -SrcPath $src -Info $info
+    # The analyze_run points: n and ms, plus the cost per call for a design problem.
+    function ConvertTo-LcEventPoints($list) {
+        return @(@($list) | ForEach-Object {
+            $o = [ordered]@{ n = $_.n; ms = $_.ms }
+            if ($null -ne $_.per_call_us) { $o.per_call_us = $_.per_call_us }
+            $o
+        })
+    }
+    # A failed analyze is still an analyze_run: its status ('crash' or 'build_error'), the sizes timed before
+    # a crash, null for the rest. Then the snapshot and journey.md, as after a report.
+    function Exit-LcFailedAnalyze([string]$Status, $Points = $null) {
+        $pl = $null
+        if ($null -ne $Points) { $pl = @(ConvertTo-LcEventPoints $Points) }
+        Add-LcEvent 'analyze_run' ([ordered]@{ status = $Status; complexity = $null; points = $pl; tle_risk = $null; alloc = $null; calls = $null })
+        [void](Save-LcSnapshot -Root $JourneyRoot -Slug $slug -SrcPath $src -SrcHash $srcHash)
+        Update-LcJourney
+        Exit-Lc 1
+    }
     $build = Build-LcExe -SrcPath $src -HarnessText $harnessText -UserText $userText -Flavor bench -Name bench
-    if (-not $build.Ok) { Write-LcBuildFailure $build; Exit-Lc 1 }
+    if (-not $build.Ok) { Write-LcBuildFailure $build; Exit-LcFailedAnalyze 'build_error' }
+    if ($build.Warnings) { Write-Host (Remove-LcUserTuLines $build.Warnings) }
     $buildDir = Split-Path -Parent $build.Exe
     $specPath = Join-Path $buildDir 'bench-spec.txt'
     $resultsPath = Join-Path $buildDir 'bench-results.txt'
@@ -236,7 +262,7 @@ if ($Mode -eq 'analyze') {
         $crash = $b.Pending
         # No size pending: the untimed allocation rerun of the largest finished (not capped) size crashed.
         if (-not $crash -and $lastDone) { $crash = @{ n = $lastDone; seed = $seed } }
-        if (-not $crash) { Write-Host "  CRASH: $(Explain $m.Code)" -ForegroundColor Red; Exit-Lc 1 }
+        if (-not $crash) { Write-Host "  CRASH: $(Explain $m.Code)" -ForegroundColor Red; Exit-LcFailedAnalyze 'crash' $b.Points }
     }
     if ($crash) {
         Write-Host "Your solution crashed on a random input of size $($crash.n) (random inputs only follow ranges, sorted and distinct, so they may break other promises)." -ForegroundColor Red
@@ -256,7 +282,7 @@ if ($Mode -eq 'analyze') {
             else { Write-Host (Format-LcInputLine -Info $info -Values ([string[]]$vals)) }
         }
         foreach ($a in $spec.Assumed) { Write-Host $a -ForegroundColor DarkGray }
-        Exit-Lc 1
+        Exit-LcFailedAnalyze 'crash' $b.Points
     }
 
     $design = $info.Kind -eq 'design'
@@ -329,11 +355,7 @@ if ($Mode -eq 'analyze') {
 
     $data = [ordered]@{
         complexity = $cx
-        points     = @($pts | ForEach-Object {
-            $o = [ordered]@{ n = $_.n; ms = $_.ms }
-            if ($null -ne $_.per_call_us) { $o.per_call_us = $_.per_call_us }
-            $o
-        })
+        points     = @(ConvertTo-LcEventPoints $pts)
         tle_risk   = $verdict
         alloc      = $null  # no size finished
     }
@@ -351,12 +373,15 @@ if ($Mode -eq 'analyze') {
     # Brute-force check: only when tests/<slug>.brute.cpp exists.
     $bruteFile = Join-Path $testsDir "$slug.brute.cpp"
     if (Test-Path -LiteralPath $bruteFile) {
-        $anyOrder = (Test-Path -LiteralPath $testFile) -and (Read-LcTestFile -Path $testFile -Info $info).AnyOrder
+        # A test file analyze can't read leaves the default (ordered compare).
+        $anyOrder = $false
+        try { $anyOrder = (Test-Path -LiteralPath $testFile) -and [bool](Read-LcTestFile -Path $testFile -Info $info).AnyOrder } catch {}
         $bc = Invoke-LcBruteCheck -SrcPath $src -BrutePath $bruteFile -Info $info -SpecPath $specPath -AnyOrder:$anyOrder -TimeoutMs $limitMs
-        if ($bc.Errors) { Write-Host "Brute force: $slug.brute.cpp doesn't build" -ForegroundColor Red; Write-Host $bc.Errors }
+        if ($bc.Errors) { Write-Host "Brute force: $slug.brute.cpp doesn't build" -ForegroundColor Red; Write-Host (Remove-LcUserTuLines $bc.Errors) }
         elseif ($null -ne $bc.Crashed) {
             $how = if ($bc.TimedOut) { 'timed out' } else { 'crashed' }
-            Write-Host "brute force $how on case $($bc.Crashed)" -ForegroundColor Red
+            $at = if ($bc.Crashed -gt 0) { " on case $($bc.Crashed)" } else { '' }  # 0: no case to blame
+            Write-Host "brute force $how$at" -ForegroundColor Red
         } elseif ($bc.Mismatch) {
             Write-Host 'Brute force: MISMATCH' -ForegroundColor Red
             Write-Host $bc.Mismatch.Input
@@ -397,6 +422,7 @@ $build = Build-LcExe -SrcPath $src -HarnessText $harnessText -UserText $userText
 $jRun.CompileOk = [bool]$build.Ok
 $jRun.CompileMs = $build.Ms
 if (-not $build.Ok) { Write-LcBuildFailure $build; Exit-Lc 1 }
+if ($build.Warnings) { Write-Host (Remove-LcUserTuLines $build.Warnings) }
 
 # ---- run ----
 $buildDir = Split-Path -Parent $build.Exe

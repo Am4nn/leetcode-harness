@@ -197,6 +197,42 @@
         $r = Invoke-LcBruteCheck -SrcPath (Join-Path $repo 'lc\selftest\climbing-stairs.cpp') -BrutePath $brute -Info $ci -SpecPath $specPath
         Assert-Equal $r.Cases 200
         Assert-Equal $r.Mismatch $null 'brute agrees'
+
+        # A brute that crashes, hangs, doesn't build or exits oddly (cached builds after the first run).
+        # Crashed is the first case with n = 5, in the gen file's order.
+        $fixtures = Join-Path $repo 'lc\selftest\brute'
+        $check = {
+            param([string]$Fixture, [int]$TimeoutMs = 60000)
+            Invoke-LcBruteCheck -SrcPath $src -BrutePath (Join-Path $fixtures $Fixture) -Info $ci -SpecPath $specPath -TimeoutMs $TimeoutMs
+        }
+        $firstFive = {
+            param([string]$Fixture)
+            $gen = Join-Path (Get-LcBuildDir (Join-Path $fixtures $Fixture)) 'brute-gen.txt'
+            $ns = @([IO.File]::ReadAllLines($gen) | Where-Object { $_.StartsWith('arg ') })
+            return [array]::IndexOf($ns, 'arg 5') + 1
+        }
+        $r = & $check 'crash.brute.cpp'
+        Assert-True (-not $r.Errors -and -not $r.TimedOut -and $null -eq $r.Mismatch) "brute crash`n$($r.Errors)"
+        Assert-True ($r.Crashed -gt 0) 'brute crash: case'
+        Assert-Equal $r.Crashed (& $firstFive 'crash.brute.cpp') 'brute crash: the first n = 5 case'
+        $r = & $check 'hang.brute.cpp' 1000
+        Assert-True ($r.TimedOut -and $r.Crashed -gt 0) 'brute timeout'
+        Assert-Equal $r.Crashed (& $firstFive 'hang.brute.cpp') 'brute timeout: the first n = 5 case'
+        $r = & $check 'odd-exit.brute.cpp'
+        Assert-True ($r.Crashed -eq 0 -and $null -ne $r.Crashed -and -not $r.TimedOut) "brute odd exit: no case to blame ($($r.Crashed))"
+        $r = & $check 'broken.brute.cpp'
+        Assert-Match $r.Errors "broken\.brute\.cpp:\d+:\d+: error: 'not_declared' was not declared"
+        Assert-True ($null -eq $r.Crashed -and $null -eq $r.Mismatch) 'brute build failure'
+
+        # Any order: the solution sorts up and the brute sorts down, so only -AnyOrder agrees.
+        $ai = Get-LcInfoFromMeta '{"name":"arrange","params":[{"name":"nums","type":"integer[]"}],"return":{"type":"integer[]"}}'
+        $aSpec = Join-Path $env:LC_BUILD_ROOT 'brute-any-spec.txt'
+        [IO.File]::WriteAllText($aSpec, "size nums`nparam nums len 1 10 val 0 9`n", (New-Object Text.UTF8Encoding $false))
+        $aArgs = @{ SrcPath = (Join-Path $fixtures 'sort-up.cpp'); BrutePath = (Join-Path $fixtures 'sort-down.brute.cpp'); Info = $ai; SpecPath = $aSpec }
+        $r = Invoke-LcBruteCheck @aArgs
+        Assert-True (-not $r.Errors -and $null -ne $r.Mismatch) "any order: ordered compare mismatches`n$($r.Errors)"
+        $r = Invoke-LcBruteCheck @aArgs -AnyOrder
+        Assert-True ($r.Cases -eq 200 -and $null -eq $r.Mismatch -and $null -eq $r.Crashed) 'any order: agrees'
     } finally {
         $env:LC_BUILD_ROOT = $oldBuildRoot
     }

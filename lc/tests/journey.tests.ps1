@@ -79,6 +79,8 @@
         foreach ($t in '10:00', '10:05', '10:06') { Write-LcEvent @e -Event test_run -Ts "2026-10-17T${t}:00+05:30" -Data @{ compile_ok = $true } }
         Write-LcEvent @e -Event solved -Ts '2026-10-17T10:06:30+05:30' -Data @{ attempts = 3; max_ms = 0.02 }
         Write-LcEvent @e -Event analyze_run -Ts '2026-10-17T10:10:00+05:30' -Data @{ complexity = 'O(n)' }
+        # A failed analyze (no complexity) keeps the last one.
+        Write-LcEvent @e -Event analyze_run -Ts '2026-10-17T10:10:30+05:30' -Data ([ordered]@{ status = 'crash'; complexity = $null })
         Write-LcEvent @e -Event note -Ts '2026-10-17T10:11:00+05:30' -Data @{ text = 'reverse trick' }
         Write-LcEvent -Root $jr -Event test_run -Slug 'two-sum' -File 'two-sum.cpp' -SrcHash $h -Ts '2026-10-18T10:00:00+05:30' -Data @{ compile_ok = $true }
         Update-LcJourneyFile -Root $jr -MetaDir (Join-Path $tmp 'nometa')
@@ -94,7 +96,7 @@
         Assert-Equal ([IO.File]::ReadAllText((Join-Path $jr 'journey.md'))) $mdText
 
         # -Slug reads only that slug's events
-        Assert-Equal @(Read-LcEvents $jr -Slug $s).Count 7
+        Assert-Equal @(Read-LcEvents $jr -Slug $s).Count 8
         Assert-Equal @(Read-LcEvents $jr -Slug 'two-sum').Count 1
         Assert-Equal @(Read-LcEvents $jr -Slug 'two').Count 0
 

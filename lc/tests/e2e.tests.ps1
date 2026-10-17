@@ -59,6 +59,7 @@
             Assert-Equal $r.Code 0 "e2e: $slug exit code`n$($r.Out)"
             Assert-Match $r.Out '\d+/\d+ passed'
             Assert-True ($r.Out -notmatch '(?m)^\s*FAIL\b') "e2e: $slug has FAIL lines`n$($r.Out)"
+            Assert-True ($r.Out -notmatch 'warning:') "e2e: $slug printed warnings`n$($r.Out)"
             $tf = Join-Path $tmp "tests\$slug.txt"
             Assert-True (Test-Path -LiteralPath $tf) "e2e: tests/$slug.txt not created"
             Assert-True ([IO.File]::ReadAllText($tf).StartsWith("# $($titles[$slug]) (#")) "e2e: tests/$slug.txt header"
@@ -83,6 +84,7 @@
         }
         $tr = @($ev | Where-Object { $_.slug -eq 'two-sum' -and $_.event -eq 'test_run' })[0]
         Assert-True ($tr.compile_ok -eq $true -and $tr.passed -eq 3 -and $tr.failed -eq 0 -and $tr.printed -eq 0) "e2e: two-sum test_run $($tr | ConvertTo-Json -Compress)"
+        Assert-True (@($tr.PSObject.Properties.Name) -notcontains 'mismatch') 'e2e: a normal test_run has no mismatch field'
         Assert-Equal (@($tr.cases | ForEach-Object { "$($_.n):$($_.status)" }) -join ',') '1:pass,2:pass,3:pass'
         Assert-Equal $tr.src_hash (Get-LcSrcHash $twoSum)
         $sv = @($ev | Where-Object { $_.slug -eq 'two-sum' -and $_.event -eq 'solved' })[0]
@@ -247,6 +249,17 @@
         Assert-Equal $r.Code 0 "e2e: aliases`n$($r.Out)"
         Assert-Match $r.Out '1/1 passed'
 
+        # e2e: g++'s warnings for a solution that builds are printed above the results, as F7 does, also on a
+        # rerun that skips the compile
+        [IO.File]::WriteAllText((Join-Path $tmp 'odd\warn.cpp'), "class Solution {`npublic:`n    int same(int a) {`n        int unused = 0;`n        return a;`n    }`n};`n", $utf8)
+        [IO.File]::WriteAllText((Join-Path $tmp 'odd\tests\warn.txt'), "Input: a = 4`nOutput: 4`n", $utf8)
+        foreach ($k in 1, 2) {
+            $r = Invoke-Lc (Join-Path $tmp 'odd\warn.cpp')
+            Assert-Equal $r.Code 0 "e2e: warnings run $k`n$($r.Out)"
+            Assert-Match $r.Out "(?s)warn\.cpp:4:\d+: warning: unused variable 'unused'.*PASS  1  4.*1/1 passed"
+            Assert-True ($r.Out -notmatch '-user\.cpp') "e2e: warnings name the generated user TU`n$($r.Out)"
+        }
+
         # e2e: an auto return type gets one line, not a compile
         [IO.File]::WriteAllText((Join-Path $tmp 'odd\auto-ret.cpp'), "class Solution {`npublic:`n    auto f(int a) { return a; }`n};`n", $utf8)
         $r = Invoke-Lc (Join-Path $tmp 'odd\auto-ret.cpp')
@@ -274,9 +287,18 @@
         [IO.File]::AppendAllText($twoSum, "int broken = undefined_name;`n", $utf8)
         $r = Invoke-Lc $twoSum
         Assert-Equal $r.Code 1 "e2e: compile error exit code`n$($r.Out)"
+        Assert-Match $r.Out "two-sum\.cpp:\d+:\d+: error: 'undefined_name' was not declared"
+        Assert-True ($r.Out -notmatch '-user\.cpp') "e2e: compile error names the generated user TU`n$($r.Out)"
         $tr = @(Read-LcEvents $journey)[-1]
         Assert-True ($tr.event -eq 'test_run' -and $tr.compile_ok -eq $false -and @($tr.cases).Count -eq 0) "e2e: compile error test_run $($tr | ConvertTo-Json -Compress)"
         Assert-Equal @(Get-ChildItem -LiteralPath $snaps -Filter *.cpp).Count ($snapCount + 1) 'e2e: compile error snapshot'
+        # A failed analyze build is an analyze_run with status build_error (same source: no new snapshot)
+        $r = Invoke-Lc $twoSum -Mode analyze
+        Assert-Equal $r.Code 1 "e2e: analyze build error exit code`n$($r.Out)"
+        Assert-True ($r.Out -notmatch '-user\.cpp') "e2e: analyze build error names the generated user TU`n$($r.Out)"
+        $a = @(Read-LcEvents $journey)[-1]
+        Assert-True ($a.event -eq 'analyze_run' -and $a.status -eq 'build_error' -and $null -eq $a.complexity -and $null -eq $a.points -and
+            $null -eq $a.tle_risk -and $null -eq $a.alloc -and $null -eq $a.calls) "e2e: analyze build_error $($a | ConvertTo-Json -Compress)"
 
         # e2e: note prompt and solve commit - without -NoWait/-NoCommit, stdin answers the note
         [IO.File]::WriteAllText($twoSum, $good + "// solved again`n", $utf8)
@@ -322,6 +344,7 @@
         Assert-True $r.Out.Contains('Note (Enter to skip): ') "e2e: mismatch note prompt`n$($r.Out)"
         $mine = @(Read-LcEvents $journey | Where-Object { $_.file -eq 'mismatch2/two-sum.cpp' })
         Assert-Equal (($mine | ForEach-Object { $_.event }) -join ',') 'test_run,note' 'e2e: mismatch events'
+        Assert-True ($mine[0].mismatch -eq $true) "e2e: mismatch test_run $($mine[0] | ConvertTo-Json -Compress)"
         Assert-Equal $mine[1].text 'renamed it'
         Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '2' 'e2e: mismatch run committed'
 
@@ -389,6 +412,10 @@
         Assert-Equal $outLines[0] 'Your solution crashed on a random input of size 1562 (random inputs only follow ranges, sorted and distinct, so they may break other promises).'
         Assert-True ($outLines[1] -match '^Input: nums = \[(-?\d+,){1561}-?\d+\]$') "e2e: crash input`n$($outLines[1].Substring(0, [Math]::Min(200, $outLines[1].Length)))"
         Assert-Equal $outLines[2] '(assumed: no constraint found for nums)'
+        # A crashed analyze is an analyze_run with status crash: the sizes timed before it, null for the rest
+        $a = @(Read-LcEvents $journey)[-1]
+        Assert-True ($a.event -eq 'analyze_run' -and $a.status -eq 'crash' -and @($a.points).Count -ge 3 -and $null -eq $a.complexity -and
+            $null -eq $a.tle_risk -and $null -eq $a.alloc -and $null -eq $a.calls) "e2e: analyze crash event $($a | ConvertTo-Json -Compress)"
         # R35c: an exception thrown by the solution shows its text after the crash line
         [IO.File]::WriteAllText((Join-Path $an 'big-throw.cpp'), ("class Solution {`npublic:`n    int first(vector<int>& nums) {`n" +
             "        if (nums.size() > 1000) throw runtime_error(`"boom`");`n        return nums[0];`n    }`n};`n"), $utf8)

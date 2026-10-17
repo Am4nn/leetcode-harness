@@ -362,7 +362,7 @@ function Read-LcCaseResults([string]$Path) {
 # its own ('brute', same harness), generates 200 random cases with n in [1, 10] (seed 1), takes the brute's
 # answers as the expected outputs and runs the solution's bench exe on them.
 # Returns @{ Cases; Mismatch = $null | @{ Input = <'Input: ...' line>; Got; Expected };
-# Crashed = $null | <case the brute crashed on>; TimedOut; Errors = <g++ output when a build failed> }.
+# Crashed = $null | <case the brute crashed on, 0 when no case is to blame>; TimedOut; Errors = <g++ output when a build failed> }.
 function Invoke-LcBruteCheck {
     param(
         [Parameter(Mandatory)][string]$SrcPath,
@@ -408,7 +408,7 @@ function Invoke-LcBruteCheck {
         }
     }
     if ($null -ne $bad -or $m.TimedOut -or $m.Code -ne 0) {
-        if ($null -eq $bad) { $bad = '?' }
+        if ($null -eq $bad) { $bad = 0 }  # every case answered, then an odd exit
         $res.Crashed = $bad; $res.TimedOut = [bool]$m.TimedOut
         return $res
     }
