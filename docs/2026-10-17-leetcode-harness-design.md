@@ -1,6 +1,6 @@
 # LeetCode harness — design
 
-Date: 2026-10-17. Status: reviewed, awaiting the user's approval.
+Date: 2026-10-17. Status: approved 2026-10-17; gray-zone answers added the same day (see "Decisions after approval").
 
 ## Why
 
@@ -24,8 +24,8 @@ They want one generic harness that runs any LeetCode solution file unchanged, co
 
 - The web view itself. This project only records the data it will need.
 - Submitting to LeetCode, logging in, or using a LeetCode token or cookie.
-- Changing the existing F7 / Shift+F7 / Ctrl+F7 / Alt+A behavior.
-- Smart random inputs that respect hidden promises ("array is sorted", "exactly one answer"). The user chose **plain random only**.
+- Changing the existing F7 / Shift+F7 / Ctrl+F7 / Alt+A behavior, apart from one fix: checking a file without `main()` also loads the TreeNode/ListNode prelude.
+- Smart random inputs for complex promises ("exactly one answer", "valid parentheses"). Only the simple ones are followed: **sorted** and **distinct**.
 - Hardware stats (cache misses etc.).
 
 ## Anti-goals (the user will stop using it if…)
@@ -38,7 +38,7 @@ They want one generic harness that runs any LeetCode solution file unchanged, co
 ## Existing setup to build on
 
 - MSYS2 UCRT64 GCC 16.2 at `C:\msys64\ucrt64\bin`, C++23. Zed may hold a stale PATH, so scripts call `C:\msys64\ucrt64\bin\g++.exe` directly and prepend that folder to PATH (see `.zed/run-cpp.ps1`).
-- `.zed/run-cpp.ps1` already has: `-D_GLIBCXX_ASSERTIONS`, UB trap, 256 MB stack, `-static`, crash-code explanations, gdb crash-line replay, `Process.Start` for reliable exit codes, the BOM fix for stdin, "Press Enter to close". Reuse these by moving shared helpers into a common script that both scripts dot-source. **F7 behavior must not change.**
+- `.zed/run-cpp.ps1` already has: `-D_GLIBCXX_ASSERTIONS`, UB trap, 256 MB stack, `-static`, crash-code explanations, gdb crash-line replay, `Process.Start` for reliable exit codes, the BOM fix for stdin, "Press Enter to close". Reuse these by moving shared helpers into a common script that both scripts dot-source. **F7 behavior must not change**, except that a file without `main()` is checked with `-include lc/lc-prelude.h` so tree/list problems don't show false errors.
 - Tasks live in `.zed/tasks.json`. Shortcuts live in the user's global Zed keymap (`%APPDATA%\Zed\keymap.json`) and bind tasks by label. Each label includes its shortcut, e.g. `Run C++ file (F7)`.
 - `.clangd` sets `--target=x86_64-w64-windows-gnu`, `--sysroot=C:/msys64/ucrt64`, `-std=c++23`.
 - Do not use `_GLIBCXX_DEBUG`. It measured about 20× slower and ruins timing.
@@ -117,7 +117,7 @@ Requirements:
 - **Comparison:**
   - Exact, after normalizing whitespace.
   - `double` within 1e-5.
-  - With `any-order`, compare the outer list as a multiset.
+  - With `any-order`, ignore order at every level of nesting: sort the inner lists too, then compare the outer list as a multiset. This matches Group Anagrams and Subsets.
 - **Method name mismatch:** if metadata says `getConcatenation` and the class doesn't have it, print one line, e.g. `LeetCode expects getConcatenation(...) but your Solution has shuffle(...)`. Then run the single public method anyway, but don't log a PASS.
 - **Crashes:** reuse `run-cpp.ps1`'s crash explanation and gdb crash-line replay, and also say which case crashed.
 - **Speed:** precompile `bits/stdc++.h` + `lc.h` (PCH). Skip recompiling when neither the solution nor the wrapper changed (hash check).
@@ -147,7 +147,7 @@ Runs in its own build without the debug checks (plain `-O2`), so timing is close
   - Trees: random shape. Strings: lowercase letters unless the constraints say otherwise.
   - Inputs are seeded and deterministic, so a reported failing input can be reproduced.
 - **Complexity estimate:**
-  - Time the solution at doubling sizes up to the constraint maximum. Fit the growth and report the closest of O(1), O(log n), O(n), O(n log n), O(n²), O(n³), O(2ⁿ), with the measured times.
+  - Time the solution at doubling sizes up to the constraint maximum. Fit the growth and report the closest of O(1), O(log n), O(n), O(n log n), O(n^2), O(n^3), O(2^n) (ASCII labels), with the measured times.
   - Cap each run at ~2 s and extrapolate past the cap.
   - State plainly that random inputs can miss the worst case.
 - **TLE warning:** the measured or extrapolated time at the maximum constraint, compared against a ~1 s budget, e.g. `n = 10^5 → est. 4.2 s: likely TLE`.
@@ -177,7 +177,7 @@ Common fields: `ts` (ISO local time with offset), `event`, `slug`, `file`, `src_
 | `note` | `text` |
 | `typed_case` | `input` (when a case is added via the terminal prompt) |
 
-**Snapshots (my call):** when `src_hash` changes on a run, copy the solution to `dsa/journey/snapshots/<slug>/<ts>.cpp`. This lets the web view later show how a solution evolved, e.g. brute force to optimal. It's cheap: files are a few KB.
+**Snapshots (user confirmed):** when `src_hash` changes on a run, copy the solution to `dsa/journey/snapshots/<slug>/<ts>.cpp`. This lets the web view later show how a solution evolved, e.g. brute force to optimal. It's cheap: files are a few KB.
 
 **Journey log:** `dsa/journey/journey.md` is a markdown table regenerated from `events.jsonl` after each run. It has one row per problem, updated in place rather than duplicated:
 
@@ -255,3 +255,15 @@ Also:
 - The exact complexity-fitting method and the size steps.
 - How the call-count instrumentation filters out STL frames.
 - The PCH details and the change-detection scheme.
+
+## Decisions after approval (2026-10-17)
+
+- **Any order:** ignore order at every level of nesting, as described under Comparison.
+- **Ctrl+F7 / F7 on files without `main()`:** the check uses the prelude, so `TreeNode`/`ListNode` resolve.
+- **Note prompt:** every run where all cases pass.
+- **Test-mode timeout:** 30 s.
+- **journey.md:** lists unsolved problems too, with `-` as the date.
+- **Git:** `journey/` is fully tracked, including events and snapshots.
+- **Auto-commit on solve:** when a `solved` event is written (after the note prompt), commit only the solution, its test file, its `.meta` cache and `journey/`, using `git commit -- <paths>`. The message is `solve: <slug> (<Difficulty>)`. Never push. If the folder isn't a git repo or the commit fails, print one line and carry on.
+- **Random promises:** follow "sorted" (ascending / non-decreasing / increasing) and "distinct / unique" when the constraints say so. "Strictly increasing" means sorted and distinct. Everything else stays plain random.
+- **Build branch:** `lc-harness`. Merge into `main` and delete the branch once all tests pass.

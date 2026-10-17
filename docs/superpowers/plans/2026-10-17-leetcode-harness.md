@@ -27,10 +27,11 @@
   - Write every text file with `[IO.File]::WriteAllText($p, $text, (New-Object Text.UTF8Encoding $false))` (or the `AppendAllText` equivalent): UTF-8, **no BOM**.
 - **Test build flags:** exactly `run-cpp.ps1`'s set, i.e. `-std=c++23 -Wall -Wextra -Wshadow -O2 -g -static -D_GLIBCXX_ASSERTIONS -fsanitize=undefined -fsanitize-undefined-trap-on-error -Wl,--stack,268435456`. Never use `_GLIBCXX_DEBUG`.
 - **Bench build flags:** `-std=c++23 -O2 -static -Wl,--stack,268435456`, with no checks.
-- **F7, Shift+F7, Ctrl+F7 and Alt+A must behave exactly as before.**
+- **F7, Shift+F7, Ctrl+F7 and Alt+A must behave exactly as before**, with one exception (user decision, Task 5): checking a file without `main()` adds `-include <dsa>/lc/lc-prelude.h`.
+- **The spec's "Decisions after approval" section overrides anything earlier in the spec.**
 - **No LeetCode login, cookie or token, ever.** Endpoint: `POST https://leetcode.com/graphql`, header `Referer: https://leetcode.com`.
 - **Defaults and limits:**
-  - Test-mode run timeout: 10 s, configurable via `-TimeoutMs`.
+  - Test-mode run timeout: 30 s, configurable via `-TimeoutMs`.
   - Analyze per-run cap: 2000 ms.
   - TLE budget: about 1 s. `<= 500 ms` is `ok`, `500-1000 ms` is `borderline`, `> 1000 ms` is `likely TLE`.
   - Double compare tolerance: 1e-5.
@@ -65,9 +66,10 @@ param nums len 1 100000 val -2147483648 2147483647
 param k val 0 100000
 param s chars abcdefghijklmnopqrstuvwxyz
 param n eqlen nums
+param arr len 1 10000 val -10000 10000 sorted distinct
 calls 200000
 ```
-- `param` takes key/value groups in any order: `len a b`, `val a b`, `chars S`, `eqlen other`.
+- `param` takes key/value groups in any order: `len a b`, `val a b`, `chars S`, `eqlen other`, and the bare flags `sorted` and `distinct`.
 - `size` names the parameter that n drives.
 - `calls` gives the maximum call count for design problems.
 
@@ -151,7 +153,7 @@ calls 200000
     - doubles with 5 decimals;
     - trees in level order, with trailing `null`s trimmed and an empty tree as `[]`;
     - lists as `[1,2]`.
-  - `template<class T> bool equal(const T& got, const T& want, bool any_order);` compares doubles within 1e-5 (also inside vectors). With `any_order`, the outer vector is compared as a multiset (sort both by `show` of the elements).
+  - `template<class T> bool equal(const T& got, const T& want, bool any_order);` compares doubles within 1e-5 (also inside vectors). With `any_order`, order is ignored at every nesting level: recursively sort each inner vector (by `show` of its elements), then compare the outer vector as a multiset.
   - `template<class T> std::string describe_diff(const T& got, const T& want);` returns `""` for non-vectors.
   - `std::vector<std::string> split_top_level(std::string_view list_text);` turns `[[2],[1,1],[]]` into `{"[2]","[1,1]","[]"}`, respecting quotes and nesting.
   - `std::string json_escape(std::string_view);`
@@ -177,7 +179,9 @@ calls 200000
   CHECK(equal(vector<int>{1,0}, vector<int>{0,1}, true));
   CHECK(!equal(vector<int>{1,0}, vector<int>{0,1}, false));
   CHECK(equal(vector<vector<int>>{{1,2},{3}}, {{3},{1,2}}, true));
-  CHECK(!equal(vector<vector<int>>{{2,1},{3}}, {{1,2},{3}}, true));   // inner order still matters
+  CHECK(equal(vector<vector<int>>{{2,1},{3}}, {{1,2},{3}}, true));    // inner order ignored too
+  CHECK(!equal(vector<vector<int>>{{2,1},{3}}, {{1,2},{3}}, false));
+  CHECK(equal(vector<vector<string>>{{"tan","nat"},{"bat"}}, {{"bat"},{"nat","tan"}}, true));
   CHECK_EQ(describe_diff(vector<int>{1,3,2,1,1,3,2}, vector<int>{1,3,2,1,1,3,2,1}),
            "first difference at index 7 (got 7 items, expected 8)");
   CHECK_EQ(describe_diff(vector<int>{1,9}, vector<int>{1,2}), "first difference at index 1");
@@ -263,7 +267,7 @@ calls 200000
 
 **Files:**
 - Create: `.zed/common.ps1`, `lc/tests/common.tests.ps1`, `lc/tests/fixtures/` (`fast.cpp` returning 0 with no output, `echo-first-byte.cpp` printing the first stdin byte as a number, `forever.cpp` with `while(true){}`, `oob.cpp` with an out-of-range `vector::operator[]` on line 5 that reads `input.txt`)
-- Modify: `.zed/run-cpp.ps1` (dot-source `common.ps1`, delete the moved code, keep behavior)
+- Modify: `.zed/run-cpp.ps1` (dot-source `common.ps1` and delete the moved code. The one behavior change: the `-fsyntax-only` check of a file without `main()` gets `-include <dsa>/lc/lc-prelude.h`.)
 
 **Interfaces:**
 - Produces (dot-sourced; all paths absolute):
@@ -286,6 +290,7 @@ calls 200000
   - `Start-Measured forever.exe -TimeoutMs 1000` gives `TimedOut -eq $true` and returns in under 3 s.
   - **Regression on the F7 script:** create a temp dir with `oob.cpp` and an `input.txt`, and run `'' | powershell -File .zed/run-cpp.ps1 -Mode input <path>`. The output matches `crashed at\s+line 5`.
   - **Check mode:** `-Mode check` on `fast.cpp` matches `No errors.`
+  - **Check mode, LeetCode tree file:** `-Mode check` on `lc/selftest/maximum-depth-of-binary-tree.cpp` (no `main()`, no `#include`) matches `No errors.` Plain `-Mode run` on it does the same, because a file without `main()` is only checked.
 - [ ] **Step 2: Run** `run-all.ps1 -Only common`. **Expected:** FAIL (no `common.ps1`).
 - [ ] **Step 3: Implement `.zed/common.ps1`** and switch `run-cpp.ps1` over to it.
 - [ ] **Step 4: Run** the tests. **Expected:** `PASS common`. Then manually run `'' | powershell -NoProfile -ExecutionPolicy Bypass -File .zed/run-cpp.ps1 -Mode input leetcode-solves/test.cpp`. **Expected:** `Hello World x`, then `--- finished: exit code 0, time ... ---`.
@@ -434,7 +439,7 @@ calls 200000
 **Interfaces:**
 - Consumes: Tasks 5–7, and the runner CLI.
 - Produces:
-  - `lc.ps1 -Mode test|analyze [-NoWait] [-NoOpen] [-Offline] [-JourneyRoot <dir>] [-TimeoutMs 10000] <path args...>`
+  - `lc.ps1 -Mode test|analyze [-NoWait] [-NoOpen] [-Offline] [-JourneyRoot <dir>] [-TimeoutMs 30000] <path args...>`
     - Joins the rest args like `run-cpp.ps1`.
     - Exit code: 0 when every compared case passes and nothing crashed, otherwise 1.
   - `build.ps1`:
@@ -453,7 +458,7 @@ calls 200000
   - When the test file is created, it opens in Zed via `& "$env:LOCALAPPDATA\Programs\Zed\bin\zed.exe" <path>`, unless `-NoOpen`.
   - A method mismatch prints its one line, then runs anyway.
   - **Crash:** the case with a `start` line but no result shows `CRASH n`, then `Explain`, then `Show-CrashLine` (debug build of the wrapper with `-O0`, gdb `run test <cases> <results>`).
-  - **Timeout:** `TIMEOUT n: still running after 10 s - infinite loop or far too slow?`
+  - **Timeout:** `TIMEOUT n: still running after <TimeoutMs/1000> s - infinite loop or far too slow?`
   - **Compile failure:** print g++'s output. Exception: when it contains `lc: unsupported parameter type`, print only `This problem uses a parameter type the harness doesn't support yet: <type from the error line>`.
   - **Design problem with no `.meta` cache** (offline or `-Offline`): print `Design problems need LeetCode's info once: connect to the internet and run again.` and exit 1.
   - **No cases:** the typed-input loop prompts `<name> = ` per parameter, runs that single case, prints its line, and appends `Input: ...` to the test file. An empty first answer ends the loop.
@@ -507,6 +512,11 @@ calls 200000
   - `solved` when all compared cases pass, with at least 1 compared, no error/crash/mismatch, and not `Test-LcSolvedBefore`
   - Snapshot on every run.
   - After a run where all compared cases pass, the closing prompt is `Note (Enter to skip): `. A non-empty answer writes a `note` event. Then `journey.md` is regenerated and the script exits. With `-NoWait` there is no prompt.
+  - **Auto-commit:** when this run wrote a `solved` event, after the note and the `journey.md` update, call `Invoke-LcSolveCommit -RepoDir <dsa root> -Paths <solution, tests/<slug>.txt, tests/.meta/<slug>.json if present, JourneyRoot> -Message "solve: <slug> (<Difficulty>)"`. When the difficulty is unknown, use `solve: <slug>`.
+- Also produces `Invoke-LcSolveCommit -RepoDir <dir> -Paths <string[]> -Message <string> -> [bool]`:
+  - runs `git -C <dir> add -- <paths>`, then `git -C <dir> commit -m <msg> -- <paths>`, so other staged or unstaged work is never included;
+  - never pushes;
+  - when the folder isn't a git repo, or git fails, prints `(not committed: <reason>)` and returns `$false`. Nothing to commit also returns `$false` silently.
 
 - [ ] **Step 1: Write the failing tests** `lc/tests/journey.tests.ps1`, in a temp root:
   - Writing 2 `test_run` events (`-Ts 2026-10-17T10:00:00+05:30`, `...10:05...`) then a `solved` event gives `Get-LcAttempts` = 0 afterwards. Before the `solved` event it is 2.
@@ -517,7 +527,8 @@ calls 200000
     | 2026-10-17 | 189 | [Rotate Array](https://leetcode.com/problems/rotate-array/) | Medium | Array, Math, Two Pointers | O(n) | 0.02 ms | 3 | reverse trick |
     ```
   - The JSON of every event line parses and has `ts`, `event`, `slug`, `file` and `src_hash`.
-  - **Add to `e2e.tests.ps1`:** run two-sum without `-NoWait` and with stdin `"two pointers next`n"`. Afterwards `events.jsonl` contains `test_run`, `solved` and `note` (`text` = `two pointers next`), and `journey.md` has a `two-sum` row.
+  - `Invoke-LcSolveCommit` in a temp `git init` repo with one unrelated modified file: the new commit contains only the given paths, the message is exact, and the unrelated file is still modified and uncommitted. In a non-repo temp dir it returns `$false` and prints `(not committed:`.
+  - **Add to `e2e.tests.ps1`:** in a temp copy made into a git repo (`git init` plus an initial commit), run two-sum without `-NoWait`. Afterwards `git log -1 --format=%s` is `solve: two-sum (Easy)`. Also run two-sum without `-NoWait` and with stdin `"two pointers next`n"`. Afterwards `events.jsonl` contains `test_run`, `solved` and `note` (`text` = `two pointers next`), and `journey.md` has a `two-sum` row.
 - [ ] **Step 2: Run** `run-all.ps1 -Only journey`, then `-Only e2e`. **Expected:** FAIL.
 - [ ] **Step 3: Implement** `journey.ps1` and wire it into `lc.ps1`.
 - [ ] **Step 4: Run** the full `run-all.ps1`. **Expected:** all PASS.
@@ -536,7 +547,7 @@ calls 200000
     - Global replacement of all `operator new`/`delete` forms: plain, array, sized, nothrow, aligned.
     - Uses `malloc`/`_msize` and `_aligned_malloc`/`_aligned_msize`.
     - `peak` is the max of `live` since the reset.
-  - `struct lc::ParamSpec { std::optional<long long> len_min, len_max, val_min, val_max; std::string chars, eqlen; };`
+  - `struct lc::ParamSpec { std::optional<long long> len_min, len_max, val_min, val_max; std::string chars, eqlen; bool sorted = false, distinct = false; };`
   - `struct lc::Spec { std::map<std::string, ParamSpec> params; std::string size; std::optional<long long> calls; };`
   - `lc::Spec lc::read_spec(const std::string& path);`
   - `template<class T> T lc::generate(const ParamSpec&, long long n, std::mt19937_64&);`
@@ -546,6 +557,8 @@ calls 200000
     - **Trees:** random shape; each new node attaches to a random free child slot.
     - **Size parameter:** when it is a scalar (e.g. `climbStairs(n)`), its value is `n`.
     - **`eqlen` scalars** take the generated length of the named parameter.
+    - **`sorted`:** the vector (or string) comes out in non-decreasing order.
+    - **`distinct`:** no repeated values. If the value range is smaller than the requested length, the length is clamped to the range size. With both flags, the result is strictly increasing.
   - **`bench` mode:**
     - Sizes `maxN, maxN/2, ...` down to ≥ 8, at most 10 sizes, run ascending.
       - `maxN` is the size parameter's `len_max`, or its `val_max` for a scalar.
@@ -598,6 +611,11 @@ calls 200000
     | `... only digits` | `0-9` |
     | `... English letters` | `a-zA-Z` |
     | `At most N calls` | `calls N` |
+    | `x is sorted in (non-decreasing\|ascending\|increasing) order` | `x sorted` |
+    | `x is sorted in strictly increasing order` | `x sorted distinct` |
+
+    Range patterns also accept strict `<`, which tightens the bound by 1. A comma-separated name list (`-10^4 < nums[i], target < 10^4`) applies the range to each name. The test asserts `param target val -9999 9999` for that line.
+    | `All the (integers\|values\|elements) of x are (unique\|distinct)`, `x contains distinct ...`, `x has unique ...` | `x distinct` |
 
     - **Size parameter:** the first param whose `Info.ParamTypes` entry is `vector<...>`, `string`, `TreeNode*` or `ListNode*`, else the first integer param.
     - **Design problems:** method and constructor param names are looked up the same way.
@@ -617,13 +635,15 @@ calls 200000
     - Design problems print `Per call: looks O(1) ...`.
     - `Assumed` notes are printed after the output.
     - Writes an `analyze_run` event with `complexity, points, tle_risk, alloc` and updates `journey.md`.
-    - **Crash during bench:** `Your solution crashed on a random input of size N (plain random may break the problem's promises).` Then dump that input via `gen --count 1 --max-n N --seed S` and print it with `Format-LcInputLine`.
+    - **Crash during bench:** `Your solution crashed on a random input of size N (random inputs only follow ranges, sorted and distinct, so they may break other promises).` Then dump that input via `gen --count 1 --max-n N --seed S` and print it with `Format-LcInputLine`.
 
 - [ ] **Step 1: Write the failing tests** `lc/tests/analyze.tests.ps1`:
   - `ConvertFrom-LcNumber '2 * 10^5'` gives 200000; `'-2^31'` gives -2147483648; `'2^31 - 1'` gives 2147483647.
   - The rotate-array constraints give spec text containing `param nums len 1 100000 val -2147483648 2147483647`, `param k val 0 100000` and `size nums`, with `MaxN` 100000.
   - Tree constraints `The number of nodes in the tree is in the range [0, 10^4].` + `-100 <= Node.val <= 100` give `param root len 0 10000 val -100 100`.
   - The lru constraints give `calls 200000`, `param capacity val 1 3000` and `param key val 0 10000`.
+  - Binary-search constraints (`1 <= nums.length <= 10^4`, `-10^4 < nums[i], target < 10^4`, `All the integers in nums are unique.`, `nums is sorted in ascending order.`) give a `nums` line containing both `sorted` and `distinct`.
+  - `nums is sorted in non-decreasing order.` alone gives `sorted` without `distinct`.
   - Constraints `@()` for two-sum give an `Assumed` entry for `nums` and `MaxN` 100000.
   - Points `n=1000,2000,4000,8000`, `ms=1e-6*n*n` give `O(n^2)`. `ms=1e-5*n` gives `O(n)`. `ms=1e-6*n*log2(n)` gives `O(n log n)`. `n=10..30 step 4`, `ms=1e-6*2^n` gives `O(2^n)`. All ms < 0.05 gives `TooFast`.
   - With the `O(n^2)` fit above, `Get-LcEstimateMs -N 100000` gives 10000 (±1%).
@@ -721,4 +741,5 @@ calls 200000
 
   Then delete those generated journey files and the copied solution, so the user's journey starts clean. Look before deleting: these are only the files this step created.
 - [ ] **Step 6: Commit:** `git add .zed/tasks.json && git commit -m "lc: Zed tasks for LeetCode test (Alt+F7) and analyze (Alt+F8)"`
-- [ ] **Step 7: Hand over.** Tell the user that the keys can only be confirmed by pressing them in Zed. Ask them to press Alt+F7 on a LeetCode file and report back.
+- [ ] **Step 7: Merge.** Once every test passes, run `git checkout main`, `git merge --no-ff lc-harness -m "Merge LeetCode harness"` and `git branch -d lc-harness`. **Expected:** `git log --oneline -1` shows the merge, and `git status` is clean.
+- [ ] **Step 8: Hand over.** Tell the user that the keys can only be confirmed by pressing them in Zed. Ask them to press Alt+F7 on a LeetCode file and report back.
