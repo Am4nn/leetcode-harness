@@ -46,7 +46,8 @@ function New-LcTestFileText($Question, $Info) {
     $text = ConvertFrom-LcHtml ([string]$q.content)
     $out = New-Object System.Collections.Generic.List[string]
     $out.Add(('# {0} (#{1}, {2}) https://leetcode.com/problems/{3}/' -f $q.title, $q.questionFrontendId, $q.difficulty, $q.titleSlug))
-    if ($text -match 'any order') { $out.Add('compare: any-order') }
+    $desc = ($text -split '(?m)^Example\b')[0]
+    if ($desc -match '(?i)\bin any order\b') { $out.Add('compare: any-order') }
     $out.Add('Constraints:')
     foreach ($c in (Get-LcConstraints $text)) { $out.Add($c) }
     $outs = Get-LcOutputsFromText $text
@@ -104,7 +105,7 @@ function Split-LcNamedValues([string]$s) {
 function Read-LcTestFile([string]$Path, $Info) {
     $text = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8).TrimStart([char]0xFEFF)
     $lines = @($text -split "\r?\n" | ForEach-Object { $_.Trim() })
-    $anyOrder = ($text -match '(?m)^\s*compare\s*:\s*any-order') -or ($text -match 'any order')
+    $anyOrder = $text -match '(?mi)^\s*compare\s*:\s*any-order\s*$'
     $stop = '^(Output|Explanation|Example|Input|Constraints|Follow|Note)\b'
     $cases = New-Object System.Collections.ArrayList
     $cur = $null

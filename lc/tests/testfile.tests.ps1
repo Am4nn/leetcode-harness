@@ -113,6 +113,12 @@ rotate 3 steps to the right: [5,6,7,1,2,3,4]
         $tw = Read-LcTestFile -Path (Write-Tmp 'two.txt' $twoText) -Info (Get-LcInfoFromMeta $twoQ.metaData)
         Assert-True $tw.AnyOrder 'two-sum any-order parsed'
 
+        # parser: any-order only from an explicit compare line
+        $r = Read-LcTestFile -Path (Write-Tmp 'ao1.txt' "Input: nums = [5], k = 0`nOutput: [5]`nExplanation: the answer may be in any order`n") -Info $rot
+        Assert-True (-not $r.AnyOrder) 'Explanation prose must not set any-order'
+        $r = Read-LcTestFile -Path (Write-Tmp 'ao2.txt' "# not any order`nInput: nums = [5], k = 0`n") -Info $rot
+        Assert-True (-not $r.AnyOrder) 'comment must not set any-order'
+
         # parser: commas inside strings
         $sInfo = [pscustomobject]@{ Kind = 'function'; Method = 'f'; ParamNames = [string[]]@('s', 'k'); ParamTypes = [string[]]@('string', 'int'); OutParam = -1 }
         $r = Read-LcTestFile -Path (Write-Tmp 'str.txt' 'Input: s = "a, b = c", k = 1') -Info $sInfo
