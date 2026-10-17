@@ -42,7 +42,8 @@ $testFile = Join-Path $testsDir "$slug.txt"
 $srcText = [IO.File]::ReadAllText($src)
 
 # ---- problem info: LeetCode metadata (cached), else the source ----
-$q = (Get-LcCachedQuestion -TestsDir $testsDir -Slug $slug -Offline:$Offline).Question
+$fetch = Get-LcCachedQuestion -TestsDir $testsDir -Slug $slug -Offline:$Offline
+$q = $fetch.Question
 if ($q -and -not $q.metaData) { $q = $null }
 if ($q) {
     $tags = @($q.topicTags | ForEach-Object { $_.name }) -join ', '
@@ -51,7 +52,7 @@ if ($q) {
     Write-Host "$slug  ($about)" -ForegroundColor Cyan
 } else {
     Write-Host $slug -ForegroundColor Cyan
-    if (-not $Offline) { Write-Host "Couldn't fetch $slug from LeetCode ($LcFetchError)." -ForegroundColor DarkGray }
+    if ($fetch.Tried) { Write-Host "Couldn't fetch $slug from LeetCode ($LcFetchError)." -ForegroundColor DarkGray }
 }
 
 $info = $null
@@ -80,7 +81,8 @@ if ($q) {
 } else {
     $info = Get-LcInfoFromSource $srcText
     if (-not $info) {
-        if ($srcText -match '\b(class|struct)\s+\w+') {
+        $noComments = $srcText -replace '(?s)/\*.*?\*/', ' ' -replace '//[^\r\n]*', ' '
+        if ($noComments -notmatch '\bclass\s+Solution\b' -and $noComments -match '\b(class|struct)\s+\w+') {
             Write-Host "Design problems need LeetCode's info once: connect to the internet and run again." -ForegroundColor Red
         } else {
             Write-Host "No class Solution with a public method in $slug.cpp." -ForegroundColor Red
@@ -153,11 +155,13 @@ function Format-LcMs($r) {
 function Write-LcResults($results, [int]$FirstN = 1) {
     $rows = foreach ($r in $results) {
         $n = [string]($FirstN + [int]$r.n - 1)
+        # Long values are cut in the one-line view; failures show them in full.
+        $v = [string]$r.got
+        if ($v.Length -gt 60) { $v = $v.Substring(0, 57) + '...' }
         switch ($r.status) {
-            'pass'  { $v = [string]$r.got; if ($v.Length -gt 60) { $v = $v.Substring(0, 57) + '...' }
-                      @{ R = $r; N = $n; Label = 'PASS'; Color = 'Green'; Text = $v } }
+            'pass'  { @{ R = $r; N = $n; Label = 'PASS'; Color = 'Green'; Text = $v } }
             'fail'  { @{ R = $r; N = $n; Label = 'FAIL'; Color = 'Red'; Text = 'got      ' + $r.got } }
-            'print' { @{ R = $r; N = $n; Label = '----'; Color = 'Gray'; Text = [string]$r.got } }
+            'print' { @{ R = $r; N = $n; Label = '----'; Color = 'Gray'; Text = $v } }
             default { @{ R = $r; N = $n; Label = 'ERR '; Color = 'Red'; Text = [string]$r.error } }
         }
     }
@@ -203,7 +207,7 @@ function Write-LcStop($run, [int]$FirstN = 1) {
 }
 
 if ($cases.Count -eq 0) {
-    # No cases: ask for each parameter, run it, and save it to the test file. Empty first answer stops.
+    # No cases: ask for each parameter, save the case to the test file, run it. An empty answer stops.
     $names = if ($info.Kind -eq 'design') { @('ops', 'args') } else { @($info.ParamNames) }
     $code = 0
     $k = 0
@@ -212,26 +216,27 @@ if ($cases.Count -eq 0) {
         foreach ($name in $names) {
             Write-Host "$name = " -NoNewline
             $a = [Console]::ReadLine()
-            if ($null -eq $a) { $a = '' }
-            $a = $a.Trim()
-            if ($vals.Count -eq 0 -and $a -eq '') { break }
-            $vals += $a
+            if ($null -eq $a -or $a.Trim() -eq '') { $vals = $null; break }
+            $vals += $a.Trim()
         }
-        if ($names.Count -gt 0 -and $vals.Count -eq 0) { break }
+        if ($null -eq $vals) { break }
         $k++
+        if ($names.Count -gt 0) {
+            # Saved before running: a case that crashes or hangs is the one most worth keeping.
+            $line = if ($info.Kind -eq 'design') { "Input`n" + ($vals -join "`n") } else { Format-LcInputLine -Info $info -Values $vals }
+            New-Item -ItemType Directory -Force $testsDir | Out-Null
+            $prefix = ''
+            if (Test-Path -LiteralPath $testFile) {
+                $old = [IO.File]::ReadAllText($testFile)
+                if ($old.Length -gt 0) { $prefix = "`n"; if (-not $old.EndsWith("`n")) { $prefix = "`n`n" } }
+            }
+            [IO.File]::AppendAllText($testFile, "$prefix$line`n", $utf8)
+        }
         $run = Invoke-LcCases @(@{ Args = [string[]]$vals; Expected = $null })
         Write-LcResults $run.Results -FirstN $k
         if (@($run.Results | Where-Object { $_.status -eq 'error' }).Count) { $code = 1 }
         if (Write-LcStop $run -FirstN $k) { Exit-Lc 1 }
         if ($names.Count -eq 0) { break }
-        $line = if ($info.Kind -eq 'design') { "Input`n" + ($vals -join "`n") } else { Format-LcInputLine -Info $info -Values $vals }
-        New-Item -ItemType Directory -Force $testsDir | Out-Null
-        $prefix = ''
-        if (Test-Path -LiteralPath $testFile) {
-            $old = [IO.File]::ReadAllText($testFile)
-            if ($old.Length -gt 0) { $prefix = "`n"; if (-not $old.EndsWith("`n")) { $prefix = "`n`n" } }
-        }
-        [IO.File]::AppendAllText($testFile, "$prefix$line`n", $utf8)
     }
     Exit-Lc $code
 }

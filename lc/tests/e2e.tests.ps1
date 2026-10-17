@@ -91,6 +91,21 @@
         Assert-Match $r.Out "crashed at\s+line $line\b"
         Assert-Equal $r.Code 1 'e2e: crash exit code'
 
+        # e2e: typed input - an empty answer for a later parameter stops without running or saving
+        $r = Invoke-Lc (Join-Path $tmp 'my-scratch.cpp') -Stdin "7`n`n"
+        Assert-Equal $r.Code 0 "e2e: partial typed input`n$($r.Out)"
+        Assert-True ($r.Out -notmatch '----') "e2e: partial typed input ran a case`n$($r.Out)"
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $tmp 'tests\my-scratch.txt'))) 'e2e: partial typed input saved a case'
+
+        # e2e: a typed case that crashes is still saved
+        $typed = Join-Path $tmp 'typed'
+        New-Item -ItemType Directory -Force $typed | Out-Null
+        [IO.File]::WriteAllText((Join-Path $typed 'boom.cpp'),
+            "class Solution {`npublic:`n    int at(int i) {`n        vector<int> v(2);`n        return v[i];`n    }`n};`n", $utf8)
+        $r = Invoke-Lc (Join-Path $typed 'boom.cpp') -Stdin "5`n"
+        Assert-Match $r.Out 'CRASH 1'
+        Assert-Match ([IO.File]::ReadAllText((Join-Path $typed 'tests\boom.txt'))) '(?m)^Input: i = 5\s*$'
+
         # e2e: typed input
         $r = Invoke-Lc (Join-Path $tmp 'my-scratch.cpp') -Stdin "2`n3`n`n"
         Assert-True $r.Out.Contains('----  1  5') "e2e: typed input`n$($r.Out)"
@@ -101,6 +116,19 @@
         Assert-Match $r.Out "parameter type the harness doesn't support"
         Assert-True ($r.Out -notmatch 'required from') "e2e: unsupported type shows the template dump`n$($r.Out)"
         Assert-Equal $r.Code 1 'e2e: unsupported type exit code'
+
+        # e2e: a class Solution without a public method is not taken for a design problem
+        [IO.File]::WriteAllText((Join-Path $tmp 'odd\private-only.cpp'), "class Solution {`n    int f(int a) { return a; }`n};`n", $utf8)
+        $r = Invoke-Lc (Join-Path $tmp 'odd\private-only.cpp')
+        Assert-True $r.Out.Contains('No class Solution with a public method in private-only.cpp.') "e2e: private-only`n$($r.Out)"
+        Assert-True (-not $r.Out.Contains('Design problems')) 'e2e: private-only got the design message'
+
+        # e2e: long values are truncated on ---- lines too
+        $tf = Join-Path $tmp 'tests\concatenation-of-array.txt'
+        [IO.File]::AppendAllText($tf, "`nInput: nums = [$((1..40) -join ',')]`n", $utf8)
+        $r = Invoke-Lc (Join-Path $tmp 'concatenation-of-array.cpp')
+        Assert-Match $r.Out '(?m)^\s+----\s+3\s+\[1,2,3[0-9,]*\.\.\.\s'
+        Assert-True ($r.Out -notmatch '40\]') "e2e: ---- line not truncated`n$($r.Out)"
     } finally {
         Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
     }

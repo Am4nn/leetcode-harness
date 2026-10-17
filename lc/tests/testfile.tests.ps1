@@ -27,6 +27,30 @@
         $miss = Get-LcCachedQuestion -TestsDir $tmp -Slug 'no-such' -Offline
         Assert-True ($null -eq $miss.Question -and -not $miss.Fetched) 'offline miss'
 
+        # "no such problem" is cached as tests/.meta/<slug>.none; network errors are not (stubbed fetch)
+        & {
+            $calls = @{ n = 0; missing = $true }
+            function Get-LcQuestion([string]$Slug) {
+                $calls.n++
+                $script:LcFetchMissing = $calls.missing
+                $script:LcFetchError = if ($calls.missing) { "no such problem: $Slug" } else { 'timed out' }
+                return $null
+            }
+            $r1 = Get-LcCachedQuestion -TestsDir $tmp -Slug 'my-scratch'
+            Assert-True ($null -eq $r1.Question -and $r1.Tried -and -not $r1.Fetched) 'missing: first call tries'
+            Assert-True (Test-Path -LiteralPath (Join-Path $tmp '.meta\my-scratch.none')) 'missing: marker written'
+            $r2 = Get-LcCachedQuestion -TestsDir $tmp -Slug 'my-scratch'
+            Assert-True ($null -eq $r2.Question -and -not $r2.Tried) 'missing: marker skips the fetch'
+            Assert-Equal $calls.n 1 'missing: fetched once'
+
+            $calls.missing = $false
+            $r3 = Get-LcCachedQuestion -TestsDir $tmp -Slug 'flaky'
+            Assert-True ($null -eq $r3.Question -and $r3.Tried) 'network error: tried'
+            Assert-True (-not (Test-Path -LiteralPath (Join-Path $tmp '.meta\flaky.none'))) 'network error: no marker'
+            $null = Get-LcCachedQuestion -TestsDir $tmp -Slug 'flaky'
+            Assert-Equal $calls.n 3 'network error: retried'
+        }
+
         # html conversion
         Assert-Equal (ConvertFrom-LcHtml '<p>10<sup>5</sup> &lt;= <code>k</code>&nbsp;x</p><ul><li>a</li><li>b</li></ul>') "10^5 <= k x`na`nb"
 

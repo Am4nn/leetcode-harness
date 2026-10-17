@@ -2,9 +2,11 @@
 # Function library: dot-source it. No side effects.
 
 $script:LcFetchError = ''
+$script:LcFetchMissing = $false  # true only when LeetCode answered that the slug doesn't exist
 
 function Get-LcQuestion([string]$Slug) {
     $script:LcFetchError = ''
+    $script:LcFetchMissing = $false
     $fields = 'questionFrontendId title titleSlug difficulty isPaidOnly topicTags { name } metaData exampleTestcaseList content'
     $body = @{
         query     = 'query q($s:String!){question(titleSlug:$s){' + $fields + '}}'
@@ -17,6 +19,7 @@ function Get-LcQuestion([string]$Slug) {
             -ContentType 'application/json; charset=utf-8' -Headers @{ Referer = 'https://leetcode.com' } -TimeoutSec 10
         if (-not $r.data -or -not $r.data.question) {
             $script:LcFetchError = "no such problem: $Slug"
+            $script:LcFetchMissing = [bool]$r.data  # {"data":{"question":null}}; anything else may be transient
             return $null
         }
         return $r.data.question
@@ -26,18 +29,27 @@ function Get-LcQuestion([string]$Slug) {
     }
 }
 
+# Returns @{ Question; Fetched; Tried }. Tried: LeetCode was contacted on this call.
+# A definite "no such problem" is remembered in .meta/<slug>.none so later runs skip the fetch.
 function Get-LcCachedQuestion([string]$TestsDir, [string]$Slug, [switch]$Offline) {
     $meta = Join-Path (Join-Path $TestsDir '.meta') "$Slug.json"
+    $none = Join-Path (Join-Path $TestsDir '.meta') "$Slug.none"
     if (Test-Path -LiteralPath $meta) {
         $q = [IO.File]::ReadAllText($meta, [Text.Encoding]::UTF8) | ConvertFrom-Json
-        return @{ Question = $q; Fetched = $false }
+        return @{ Question = $q; Fetched = $false; Tried = $false }
     }
-    if ($Offline) { return @{ Question = $null; Fetched = $false } }
+    if ($Offline -or (Test-Path -LiteralPath $none)) { return @{ Question = $null; Fetched = $false; Tried = $false } }
     $q = Get-LcQuestion -Slug $Slug
-    if ($null -eq $q) { return @{ Question = $null; Fetched = $false } }
+    if ($null -eq $q) {
+        if ($script:LcFetchMissing) {
+            New-Item -ItemType Directory -Force (Split-Path -Parent $none) | Out-Null
+            [IO.File]::WriteAllText($none, '', (New-Object Text.UTF8Encoding $false))
+        }
+        return @{ Question = $null; Fetched = $false; Tried = $true }
+    }
     New-Item -ItemType Directory -Force (Split-Path -Parent $meta) | Out-Null
     [IO.File]::WriteAllText($meta, ($q | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding $false))
-    return @{ Question = $q; Fetched = $true }
+    return @{ Question = $q; Fetched = $true; Tried = $true }
 }
 
 function ConvertFrom-LcHtml([string]$html) {
