@@ -177,6 +177,12 @@ int main(int, char** argv) {
         auto [k, nums] = generate_args<int, vector<int>>(s2, {"k", "nums"}, 50, rng);
         CHECK_EQ(nums.size(), 3u);
         CHECK_EQ(k, 3);
+        // Non-scalar types must compile through the size-scalar branch too.
+        Spec s3;
+        s3.size = "s";
+        auto [s, d] = generate_args<string, double>(s3, {"s", "d"}, 7, rng);
+        CHECK_EQ(s.size(), 7u);
+        CHECK(d >= -10000 && d <= 10000);
     }
 
     // read_spec on the formats.md sample.

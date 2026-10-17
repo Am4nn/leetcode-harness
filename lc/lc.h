@@ -3,6 +3,8 @@
 #define LC_H
 
 #include "lc-io.h"
+#include "lc-alloc.h"
+#include "lc-gen.h"
 #include "lc-run.h"
 
 #endif

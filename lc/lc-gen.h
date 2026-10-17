@@ -268,10 +268,12 @@ std::tuple<Ts...> generate_args(const Spec& spec, const std::vector<std::string>
             if constexpr (detail::is_size_scalar_v<T>) v = (T)len;
             else v = generate<T>(p, len, rng);
         } else if (I < names.size() && names[I] == spec.size && detail::is_size_scalar_v<T>) {
-            long long x = n;
-            if (p.val_max) x = std::min(x, *p.val_max);
-            if (p.val_min) x = std::max(x, *p.val_min);
-            v = (T)x;
+            if constexpr (detail::is_size_scalar_v<T>) {  // keeps the cast out of non-scalar instantiations
+                long long x = n;
+                if (p.val_max) x = std::min(x, *p.val_max);
+                if (p.val_min) x = std::max(x, *p.val_min);
+                v = (T)x;
+            }
         } else {
             v = generate<T>(p, n, rng);
         }
