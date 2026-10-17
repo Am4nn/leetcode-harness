@@ -1,0 +1,22 @@
+{
+    "questionFrontendId":  "206",
+    "title":  "Reverse Linked List",
+    "titleSlug":  "reverse-linked-list",
+    "difficulty":  "Easy",
+    "isPaidOnly":  false,
+    "topicTags":  [
+                      {
+                          "name":  "Linked List"
+                      },
+                      {
+                          "name":  "Recursion"
+                      }
+                  ],
+    "metaData":  "{\r\n  \"name\": \"reverseList\",\r\n  \"params\": [\r\n    {\r\n      \"name\": \"head\",\r\n      \"type\": \"ListNode\",\r\n      \"dealloc\": false\r\n    }\r\n  ],\r\n  \"return\": {\r\n    \"type\": \"ListNode\",\r\n    \"dealloc\": true\r\n  }\r\n}",
+    "exampleTestcaseList":  [
+                                "[1,2,3,4,5]",
+                                "[1,2]",
+                                "[]"
+                            ],
+    "content":  "\u003cp\u003eGiven the \u003ccode\u003ehead\u003c/code\u003e of a singly linked list, reverse the list, and return \u003cem\u003ethe reversed list\u003c/em\u003e.\u003c/p\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 1:\u003c/strong\u003e\u003c/p\u003e\n\u003cimg alt=\"\" src=\"https://assets.leetcode.com/uploads/2021/02/19/rev1ex1.jpg\" style=\"width: 542px; height: 222px;\" /\u003e\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e head = [1,2,3,4,5]\n\u003cstrong\u003eOutput:\u003c/strong\u003e [5,4,3,2,1]\n\u003c/pre\u003e\n\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 2:\u003c/strong\u003e\u003c/p\u003e\n\u003cimg alt=\"\" src=\"https://assets.leetcode.com/uploads/2021/02/19/rev1ex2.jpg\" style=\"width: 182px; height: 222px;\" /\u003e\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e head = [1,2]\n\u003cstrong\u003eOutput:\u003c/strong\u003e [2,1]\n\u003c/pre\u003e\n\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 3:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e head = []\n\u003cstrong\u003eOutput:\u003c/strong\u003e []\n\u003c/pre\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong\u003eConstraints:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cul\u003e\n\t\u003cli\u003eThe number of nodes in the list is the range \u003ccode\u003e[0, 5000]\u003c/code\u003e.\u003c/li\u003e\n\t\u003cli\u003e\u003ccode\u003e-5000 \u0026lt;= Node.val \u0026lt;= 5000\u003c/code\u003e\u003c/li\u003e\n\u003c/ul\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong\u003eFollow up:\u003c/strong\u003e A linked list can be reversed either iteratively or recursively. Could you implement both?\u003c/p\u003e\n"
+}
