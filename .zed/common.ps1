@@ -49,7 +49,7 @@ function Start-Measured {
     $psi = New-Object Diagnostics.ProcessStartInfo $Exe
     $psi.UseShellExecute = $false
     $quoted = foreach ($a in $ArgumentList) {
-        if ($a -eq '' -or $a -match '[\s"]') { '"' + ($a -replace '(\*)"', '$1$1\"' -replace '(\+)$', '$1$1') + '"' } else { $a }
+        if ($a -eq '' -or $a -match '[\s"]') { '"' + ($a -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"' } else { $a }
     }
     $psi.Arguments = $quoted -join ' '
     $psi.RedirectStandardInput = [bool]$StdinFile

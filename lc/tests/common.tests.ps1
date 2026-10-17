@@ -7,7 +7,7 @@ $zed = Join-Path $dsaRoot '.zed'
 $fix = Join-Path $PSScriptRoot 'fixtures'
 $bt = Join-Path $dsaRoot 'build\tests'
 New-Item -ItemType Directory -Force $bt | Out-Null
-foreach ($n in 'fast', 'echo-first-byte', 'forever') {
+foreach ($n in 'fast', 'echo-first-byte', 'forever', 'argv') {
     & $Gpp @CppFlags @TestFlags (Join-Path $fix "$n.cpp") -o (Join-Path $bt "fx-$n.exe") 2>&1 | Out-Null
     Assert-Equal $LASTEXITCODE 0 "compile fixture $n"
 }
@@ -25,9 +25,16 @@ try {
     [IO.File]::WriteAllText($stdin, '3', (New-Object Text.UTF8Encoding $false))
     $echo = Join-Path $bt 'fx-echo-first-byte.exe'
     $outFile = Join-Path $tmp 'out.txt'
-    $r = Start-Measured -Exe 'cmd.exe' -ArgumentList @('/c', "`"$echo`" > `"$outFile`"") -StdinFile $stdin
+    $r = Start-Measured -Exe 'cmd.exe' -ArgumentList @('/c', $echo, '>', $outFile) -StdinFile $stdin  # paths here have no spaces
     Assert-Equal $r.Code 0
     Assert-Equal ([IO.File]::ReadAllText($outFile)) '51' 'first byte must be 51 (no BOM)'
+
+    # Quoting: spaces, a trailing backslash and embedded quotes must reach argv intact.
+    $argvOut = Join-Path $tmp 'argv.txt'
+    $r = Start-Measured -Exe (Join-Path $bt 'fx-argv.exe') -ArgumentList @($argvOut, 'C:\x y\', 'say "hi"', 'plain', 'a b')
+    Assert-Equal $r.Code 0
+    $got = [IO.File]::ReadAllText($argvOut)
+    Assert-Equal ($got -replace "`r?`n", '|') 'C:\x y\|say "hi"|plain|a b|' 'argv round trip'
 
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $r = Start-Measured -Exe (Join-Path $bt 'fx-forever.exe') -TimeoutMs 1000
