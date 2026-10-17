@@ -81,6 +81,8 @@ Check: `git log --oneline` shows one commit, and `leetcode-solves\` is empty.
 
 This makes `TreeNode`, `ListNode` and `using namespace std` known to clangd, so LeetCode starter code shows no false errors.
 
+Commit the change: `git commit -am "Point clangd at this folder"`.
+
 ## 5. Create the project's Zed settings
 
 `.zed/settings.json` is git-ignored because Alt+A rewrites it on every press. Create it:
@@ -129,7 +131,7 @@ Copy-Item lc\selftest\tests\.meta\two-sum.json "$t\tests\.meta"
 powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc.ps1 -Mode test -NoWait -NoOpen -Offline -NoCommit -JourneyRoot "$t\journey" "$t\two-sum.cpp"
 ```
 
-Check: the output ends with `3/3 passed` and has no FAIL line. The first run takes about a minute while it builds the precompiled headers. Later runs take a few seconds.
+Check: the output ends with `3/3 passed` and has no FAIL line. The first run takes 30 to 60 s while it builds the precompiled headers. Later runs take a few seconds.
 
 Optional full self-test, which takes a few minutes: `powershell -NoProfile -ExecutionPolicy Bypass -File lc\tests\run-all.ps1`. Every line should say PASS.
 
