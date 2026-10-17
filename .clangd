@@ -1,0 +1,5 @@
+CompileFlags:
+  Add:
+    - --target=x86_64-w64-windows-gnu
+    - --sysroot=C:/msys64/ucrt64
+    - -std=c++23

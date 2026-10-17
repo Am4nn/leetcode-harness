@@ -1,0 +1,6 @@
+# Compiled output (exes, wrappers, precompiled headers)
+build/
+
+# Rewritten by the Alt+A autocomplete toggle on every press
+.zed/settings.json
+.zed/toggle-autocomplete.log
