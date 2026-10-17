@@ -102,7 +102,7 @@ function ConvertTo-LcSpec {
     }
     if (-not $sizeName) { foreach ($n in $names) { if ($PR[$n].Type -in 'int', 'long long') { $sizeName = $n; break } } }
 
-    $pl = @()
+    $pl = @(); $sizeLen = $null; $sizeVal = $null
     foreach ($n in $names) {
         $p = $PR[$n]; $t = $p.Type
         if ($t -eq 'bool') { continue }
@@ -124,6 +124,7 @@ function ConvertTo-LcSpec {
             }
             elseif ($t -eq 'char' -and -not $chars) { $chars = $dChars }
         }
+        if ($n -eq $sizeName) { $sizeLen = $len; $sizeVal = $val }
         $parts = @("param $n")
         if ($len) { $parts += "len $($len[0]) $($len[1])" }
         if ($val -and -not $isStr) { $parts += "val $($val[0]) $($val[1])" }
@@ -138,9 +139,14 @@ function ConvertTo-LcSpec {
     if ($Info.Kind -eq 'design') {
         if ($calls) { $maxN = $calls }
     } elseif ($sizeName) {
-        $p = $PR[$sizeName]
-        if ($p.Len) { $maxN = $p.Len[1] }
-        elseif ($p.Val -and $p.Type -in 'int', 'long long') { $maxN = $p.Val[1] }
+        # bench's schedule maximum (the spec's lengths after defaults): a grid's size is its cells,
+        # len_max^2 capped at 10^7 (R16, grid_max_cells in lc-run.h).
+        $t = $PR[$sizeName].Type
+        if ($sizeLen) {
+            $maxN = [long]$sizeLen[1]
+            if ($t -like 'vector<vector<*') { $maxN = [long][Math]::Min([double]$maxN * $maxN, 10000000) }
+        }
+        elseif ($sizeVal -and $t -in 'int', 'long long') { $maxN = [long]$sizeVal[1] }
     }
 
     if ($Info.Kind -ne 'design' -and $sizeName) { $lines += "size $sizeName" }
@@ -207,8 +213,8 @@ function Get-LcPerCallLabel([string]$Label) {
     return $Label
 }
 
-# Parses bench results lines. Returns @{ Points = @(@{ n; ms }) (completed sizes, plus a measured cap,
-# which is a real one-run timing); Capped = @{ n; ms; Predicted } or $null; Alloc = @{ count; bytes; peak; n }
+# Parses bench results lines. Returns @{ Points = @(@{ n; ms; capped; per_call_us? }) (completed sizes,
+# plus a measured cap, which is a real one-run timing, with capped = $true); Capped = @{ n; ms; Predicted } or $null; Alloc = @{ count; bytes; peak; n }
 # or $null; Pending = @{ n; seed } for a size that started and never finished (crash or kill), else $null;
 # Error = @{ n; seed; error } when the solution threw, else $null }.
 function Read-LcBenchResults([string[]]$Lines) {
@@ -228,7 +234,9 @@ function Read-LcBenchResults([string[]]$Lines) {
             $res.Capped = @{ n = [long]$o.n; ms = [double]$o.ms; Predicted = [bool]$o.predicted }
             if ($o.predicted) { continue }
         }
-        $res.Points += @{ n = [long]$o.n; ms = [double]$o.ms }
+        $pt = @{ n = [long]$o.n; ms = [double]$o.ms; capped = [bool]$o.capped }
+        if ($null -ne $o.per_call_us) { $pt.per_call_us = [double]$o.per_call_us }
+        $res.Points += $pt
     }
     return $res
 }
@@ -240,6 +248,13 @@ function Format-LcDuration([double]$Ms) {
     if ($Ms -ge 100) { return $Ms.ToString('0', $inv) + ' ms' }
     if ($Ms -ge 10) { return $Ms.ToString('0.0', $inv) + ' ms' }
     return $Ms.ToString('0.00', $inv) + ' ms'
+}
+
+function Format-LcPerCallUs([double]$Us) {
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    if ($Us -ge 100) { return $Us.ToString('0', $inv) + ' us/call' }
+    if ($Us -ge 10) { return $Us.ToString('0.0', $inv) + ' us/call' }
+    return $Us.ToString('0.00', $inv) + ' us/call'
 }
 
 function Format-LcBytes([long]$Bytes) {

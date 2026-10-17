@@ -71,12 +71,14 @@
         '{"status":"start","n":32,"seed":1}', '{"capped":true,"n":32,"ms":2500}',
         '{"alloc":{"count":3,"bytes":800000,"peak":700000},"n":16}')
     Assert-Equal (@($b.Points | ForEach-Object { "$($_.n):$($_.ms)" }) -join ',') '8:0.5,16:1.5,32:2500'
+    Assert-Equal (@($b.Points | ForEach-Object { [bool]$_.capped }) -join ',') 'False,False,True' 'the measured cap point is flagged'
     Assert-True ($b.Capped.n -eq 32 -and -not $b.Capped.Predicted) 'measured cap'
     Assert-True ($null -eq $b.Pending -and $null -eq $b.Error) 'a capped size is not pending'
     Assert-Equal "$($b.Alloc.count)|$($b.Alloc.bytes)|$($b.Alloc.peak)|$($b.Alloc.n)" '3|800000|700000|16'
     $b = Read-LcBenchResults @('{"status":"start","n":8,"seed":7}', '{"n":8,"ms":0.5,"reps":50,"per_call_us":62.5}',
         '{"capped":true,"n":16,"ms":9000,"per_call_us":562500,"predicted":true}')
     Assert-Equal @($b.Points).Count 1
+    Assert-Equal $b.Points[0].per_call_us 62.5
     Assert-True ($b.Capped.Predicted -and $b.Capped.n -eq 16) 'predicted cap'
     $b = Read-LcBenchResults @('{"status":"start","n":8,"seed":7}', '{"n":8,"ms":0.5,"reps":50}', '{"status":"start","n":16,"seed":7}')
     Assert-Equal "$($b.Pending.n)|$($b.Pending.seed)" '16|7'
@@ -95,4 +97,13 @@
     Assert-Equal (Format-LcBytes 800000) '0.8 MB'
     Assert-Equal (Format-LcBytes 23720) '23.2 KB'
     Assert-Equal (Format-LcBytes 12) '12 B'
+    Assert-Equal (Format-LcPerCallUs 0.080655) '0.08 us/call'
+    Assert-Equal (Format-LcPerCallUs 12.34) '12.3 us/call'
+
+    # R16: a grid's size is its cells, so MaxN is len_max^2 (capped at 10^7 like bench), not rows.
+    $gi = Get-LcInfoFromMeta '{"name":"numIslands","params":[{"name":"grid","type":"character[][]"}],"return":{"type":"integer"}}'
+    Assert-Equal (ConvertTo-LcSpec -Constraints @('1 <= grid.length <= 200') -Info $gi).MaxN 40000
+    $gi = Get-LcInfoFromMeta '{"name":"f","params":[{"name":"grid","type":"integer[][]"}],"return":{"type":"integer"}}'
+    Assert-Equal (ConvertTo-LcSpec -Constraints @('1 <= grid.length <= 10^5') -Info $gi).MaxN 10000000
+    Assert-Equal (ConvertTo-LcSpec -Constraints @() -Info $gi).MaxN 10000000
 }

@@ -344,12 +344,13 @@
         Assert-Match $r.Out '(?m)^Allocations at n=45: none\s*$'
         $r = Invoke-Lc (Join-Path $tmp 'lru-cache.cpp') -Mode analyze
         Assert-Match $r.Out '(?m)^Per call: looks O\(1\) \(random inputs; worst case may differ\)'
+        Assert-Match $r.Out '(?m)^  n=\d+ [0-9.]+ us/call( \| n=\d+ [0-9.]+ us/call)+\s*$'
         Assert-Match $r.Out '(?m)^At n = 200000: est\. '
         $an = @(Read-LcEvents $journey | Where-Object { $_.event -eq 'analyze_run' })
         Assert-Equal ($an.Count - $evBefore) 4 'e2e: analyze_run events'
         $a = $an[-1]
         Assert-True ($a.slug -eq 'lru-cache' -and $a.complexity -eq 'O(1) per call' -and $a.tle_risk -eq 'ok') "e2e: lru analyze_run $($a | ConvertTo-Json -Compress)"
-        Assert-True (@($a.points).Count -ge 3 -and $null -ne @($a.points)[0].n -and $null -ne @($a.points)[0].ms) "e2e: analyze_run points $($a | ConvertTo-Json -Compress)"
+        Assert-True (@($a.points).Count -ge 3 -and $null -ne @($a.points)[0].n -and $null -ne @($a.points)[0].ms -and @($a.points)[0].per_call_us -gt 0) "e2e: analyze_run points $($a | ConvertTo-Json -Compress)"
         Assert-True ($a.alloc.count -gt 0 -and $a.alloc.bytes -gt 0 -and $null -ne $a.alloc.peak) "e2e: analyze_run alloc $($a | ConvertTo-Json -Compress)"
         # journey.md's Complexity comes from the latest analyze_run (the hash-map two-sum ran after the variant)
         Assert-Match ([IO.File]::ReadAllText((Join-Path $journey 'journey.md'))) '\[Two Sum\]\(https://leetcode\.com/problems/two-sum/\) \| Easy \| Array, Hash Table \| O\(n( log n)?\) \|'
@@ -366,6 +367,15 @@
         Assert-Equal $outLines[0] 'Your solution crashed on a random input of size 1562 (random inputs only follow ranges, sorted and distinct, so they may break other promises).'
         Assert-True ($outLines[1] -match '^Input: nums = \[(-?\d+,){1561}-?\d+\]$') "e2e: crash input`n$($outLines[1].Substring(0, [Math]::Min(200, $outLines[1].Length)))"
         Assert-Equal $outLines[2] '(assumed: no constraint found for nums)'
+        # R35c: an exception thrown by the solution shows its text after the crash line
+        [IO.File]::WriteAllText((Join-Path $an 'big-throw.cpp'), ("class Solution {`npublic:`n    int first(vector<int>& nums) {`n" +
+            "        if (nums.size() > 1000) throw runtime_error(`"boom`");`n        return nums[0];`n    }`n};`n"), $utf8)
+        $r = Invoke-Lc (Join-Path $an 'big-throw.cpp') -Mode analyze
+        Assert-Equal $r.Code 1 "e2e: analyze exception exit code`n$($r.Out)"
+        $outLines = @($r.Out.TrimEnd() -split '\r?\n')
+        Assert-Match $outLines[0] '^Your solution crashed on a random input of size 1562 '
+        Assert-Equal $outLines[1] 'exception: boom'
+        Assert-True ($outLines[2] -match '^Input: nums = \[(-?\d+,){1561}-?\d+\]$') "e2e: exception input"
 
         # e2e: R5 backstop - a run still going after the timeout is killed and reported as a cap
         [IO.File]::WriteAllText((Join-Path $an 'hang.cpp'), ("class Solution {`npublic:`n    int spin(vector<int>& nums) {`n" +
@@ -374,6 +384,19 @@
         Assert-Equal $r.Code 0 "e2e: analyze backstop exit code`n$($r.Out)"
         Assert-Match $r.Out '(?m)^  stopped at n=1562: still running after 3 s\s*$'
         Assert-True ($r.Ms -lt 20000) "e2e: analyze backstop took $($r.Ms) ms"
+        $a = @(Read-LcEvents $journey)[-1]
+        Assert-True ($a.event -eq 'analyze_run' -and @($a.PSObject.Properties.Name) -contains 'alloc' -and $null -eq $a.alloc) "e2e: analyze_run alloc null $($a | ConvertTo-Json -Compress)"
+
+        # e2e: R16 - a grid's n is its cells, so the estimate is at len_max^2 = 40000 cells, not 200 rows
+        New-Item -ItemType Directory -Force (Join-Path $an 'tests') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $an 'grid-sum.cpp'), ("class Solution {`npublic:`n    long long gridSum(vector<vector<int>>& grid) {`n" +
+            "        long long s = 0;`n        for (auto& row : grid) for (int v : row) s += v;`n        return s;`n    }`n};`n"), $utf8)
+        [IO.File]::WriteAllText((Join-Path $an 'tests\grid-sum.txt'), "Constraints:`n1 <= grid.length <= 200`n-100 <= grid[i][j] <= 100`n`nInput: grid = [[1,2],[3,4]]`nOutput: 10`n", $utf8)
+        $r = Invoke-Lc (Join-Path $an 'grid-sum.cpp') -Mode analyze
+        Assert-Equal $r.Code 0 "e2e: analyze grid exit code`n$($r.Out)"
+        Assert-Match $r.Out '(?m)^At n = 40000: est\. '
+        $ns = @([regex]::Matches($r.Out, 'n=(\d+) ') | ForEach-Object { [long]$_.Groups[1].Value })
+        Assert-True ($ns.Count -ge 3 -and ($ns | Measure-Object -Maximum).Maximum -gt 10000) "e2e: grid points are cells`n$($r.Out)"
 
         # e2e: the real dsa/journey was never written
         if ($null -eq $realEventsTime) { Assert-True (-not (Test-Path -LiteralPath $realEvents)) 'e2e: wrote the real journey' }

@@ -224,18 +224,23 @@ if ($Mode -eq 'analyze') {
     $lines = @()
     if (Test-Path -LiteralPath $resultsPath) { $lines = [IO.File]::ReadAllLines($resultsPath) }
     $b = Read-LcBenchResults $lines
+    # The largest size that finished below the cap: the one bench reruns for the allocation counts.
+    $lastDone = $null
+    foreach ($p in @($b.Points)) { if (-not $p.capped) { $lastDone = $p.n } }
     $crash = $b.Error
     if (-not $crash -and -not $m.TimedOut -and $m.Code -ne 0) {
         if ($m.Code -eq 2 -and -not $b.Pending) { Exit-Lc 1 }  # the runner printed the problem
         $crash = $b.Pending
-        # No size pending: the untimed allocation rerun of the largest finished size crashed.
-        if (-not $crash -and @($b.Points).Count) { $crash = @{ n = @($b.Points)[-1].n; seed = $seed } }
+        # No size pending: the untimed allocation rerun of the largest finished (not capped) size crashed.
+        if (-not $crash -and $lastDone) { $crash = @{ n = $lastDone; seed = $seed } }
         if (-not $crash) { Write-Host "  CRASH: $(Explain $m.Code)" -ForegroundColor Red; Exit-Lc 1 }
     }
     if ($crash) {
         Write-Host "Your solution crashed on a random input of size $($crash.n) (random inputs only follow ranges, sorted and distinct, so they may break other promises)." -ForegroundColor Red
+        if ($crash.error) { Write-Host $crash.error -ForegroundColor Red }  # the solution threw
         # R14: gen at exactly that size and seed rebuilds the input bench used.
         $genPath = Join-Path $buildDir 'bench-crash.txt'
+        Remove-Item -LiteralPath $genPath -ErrorAction SilentlyContinue
         & $build.Exe gen $specPath $genPath --count 1 --n $crash.n --seed $crash.seed 2>&1 | Out-Null
         if (Test-Path -LiteralPath $genPath) {
             $vals = @(); $ops = ''; $dargs = ''
@@ -261,10 +266,13 @@ if ($Mode -eq 'analyze') {
     $head = if ($design) { 'Per call: ' } else { 'Complexity: ' }
     Write-Host "$head$what (random inputs; worst case may differ)"
     $pts = @($b.Points)
-    if ($pts.Count) { Write-Host ('  ' + (@($pts | ForEach-Object { "n=$($_.n) $(Format-LcDuration $_.ms)" }) -join ' | ')) }
+    # Design problems show the cost per call (spec); the fit and the estimate use the totals.
+    $fmt = if ($design) { { "n=$($_.n) $(Format-LcPerCallUs $_.per_call_us)" } } else { { "n=$($_.n) $(Format-LcDuration $_.ms)" } }
+    if ($pts.Count) { Write-Host ('  ' + (@($pts | ForEach-Object $fmt) -join ' | ')) }
     if ($m.TimedOut) {
+        # Nothing pending: the allocation rerun of the largest finished size was still running.
         $n = '?'
-        if ($b.Pending) { $n = $b.Pending.n }
+        if ($b.Pending) { $n = $b.Pending.n } elseif ($lastDone) { $n = $lastDone }
         Write-Host ("  stopped at n={0}: still running after {1} s" -f $n, ($limitMs / 1000))
     } elseif ($b.Capped -and $b.Capped.Predicted) {
         Write-Host "  stopped before n=$($b.Capped.n) (est. $(Format-LcDuration $b.Capped.ms), over the $($capMs / 1000) s cap)"
@@ -296,8 +304,13 @@ if ($Mode -eq 'analyze') {
 
     $data = [ordered]@{
         complexity = $cx
-        points     = @($pts | ForEach-Object { [ordered]@{ n = $_.n; ms = $_.ms } })
+        points     = @($pts | ForEach-Object {
+            $o = [ordered]@{ n = $_.n; ms = $_.ms }
+            if ($null -ne $_.per_call_us) { $o.per_call_us = $_.per_call_us }
+            $o
+        })
         tle_risk   = $verdict
+        alloc      = $null  # no size finished
     }
     if ($al) { $data.alloc = [ordered]@{ count = $al.count; bytes = $al.bytes; peak = $al.peak } }
     Add-LcEvent 'analyze_run' $data
