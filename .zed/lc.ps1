@@ -348,6 +348,25 @@ if ($Mode -eq 'analyze') {
             $data.calls[$k] = [ordered]@{ count = $p.Calls; depth = $p.Depth }
         }
     }
+    # Brute-force check: only when tests/<slug>.brute.cpp exists.
+    $bruteFile = Join-Path $testsDir "$slug.brute.cpp"
+    if (Test-Path -LiteralPath $bruteFile) {
+        $anyOrder = (Test-Path -LiteralPath $testFile) -and (Read-LcTestFile -Path $testFile -Info $info).AnyOrder
+        $bc = Invoke-LcBruteCheck -SrcPath $src -BrutePath $bruteFile -Info $info -SpecPath $specPath -AnyOrder:$anyOrder -TimeoutMs $limitMs
+        if ($bc.Errors) { Write-Host "Brute force: $slug.brute.cpp doesn't build" -ForegroundColor Red; Write-Host $bc.Errors }
+        elseif ($null -ne $bc.Crashed) {
+            $how = if ($bc.TimedOut) { 'timed out' } else { 'crashed' }
+            Write-Host "brute force $how on case $($bc.Crashed)" -ForegroundColor Red
+        } elseif ($bc.Mismatch) {
+            Write-Host 'Brute force: MISMATCH' -ForegroundColor Red
+            Write-Host $bc.Mismatch.Input
+            Write-Host "yours: $($bc.Mismatch.Got)   brute: $($bc.Mismatch.Expected)"
+            $data.brute = [ordered]@{ cases = $bc.Cases; mismatch_input = $bc.Mismatch.Input }
+        } else {
+            Write-Host "Brute force: $($bc.Cases) random cases agree" -ForegroundColor Green
+            $data.brute = [ordered]@{ cases = $bc.Cases }
+        }
+    }
     Add-LcEvent 'analyze_run' $data
     [void](Save-LcSnapshot -Root $JourneyRoot -Slug $slug -SrcPath $src -SrcHash $srcHash)
     Update-LcJourney

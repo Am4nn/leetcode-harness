@@ -175,4 +175,26 @@
     } finally {
         $env:LC_BUILD_ROOT = $oldBuildRoot
     }
+
+    # Task 13: brute-force check. The bugged memo version is off by one when n % 7 == 0; with n in [1, 10]
+    # the first such case is n = 7 (21 ways).
+    . (Join-Path $repo '.zed\lc\testfile.ps1')
+    $env:LC_BUILD_ROOT = Join-Path $env:TEMP 'lc-analyze-build'
+    try {
+        $brute = Join-Path $repo 'lc\selftest\bugged\tests\climbing-stairs.brute.cpp'
+        New-Item -ItemType Directory -Force $env:LC_BUILD_ROOT | Out-Null
+        $specPath = Join-Path $env:LC_BUILD_ROOT 'brute-spec.txt'
+        [IO.File]::WriteAllText($specPath, "size n`nparam n val 1 45`n", (New-Object Text.UTF8Encoding $false))
+        $r = Invoke-LcBruteCheck -SrcPath (Join-Path $repo 'lc\selftest\bugged\climbing-stairs.cpp') -BrutePath $brute -Info $ci -SpecPath $specPath
+        Assert-True (-not $r.Errors -and -not $r.Crashed) "brute check`n$($r.Errors)"
+        Assert-Equal $r.Cases 200
+        Assert-Equal $r.Mismatch.Input 'Input: n = 7'
+        Assert-Equal $r.Mismatch.Got '22'
+        Assert-Equal $r.Mismatch.Expected '21'
+        $r = Invoke-LcBruteCheck -SrcPath (Join-Path $repo 'lc\selftest\climbing-stairs.cpp') -BrutePath $brute -Info $ci -SpecPath $specPath
+        Assert-Equal $r.Cases 200
+        Assert-Equal $r.Mismatch $null 'brute agrees'
+    } finally {
+        $env:LC_BUILD_ROOT = $oldBuildRoot
+    }
 }

@@ -1,5 +1,6 @@
 # Analyze library: LeetCode constraints -> spec text, complexity fit, TLE verdict.
-# Pure functions: dot-source it. No side effects, no output.
+# Pure functions: dot-source it. No side effects, no output (except Invoke-LcBruteCheck, which builds and runs;
+# it needs common.ps1, info.ps1, testfile.ps1 and build.ps1).
 
 function ConvertFrom-LcNumber([string]$expr) {
     $s = ($expr -replace '[\s,]', '')
@@ -341,4 +342,101 @@ function Resolve-LcProfile([string]$Exe, [string[]]$Lines) {
         }
     }
     return @($want.Values | Sort-Object @{ Expression = { $_.Calls }; Descending = $true }, @{ Expression = { $_.Name } } | Select-Object -First 5)
+}
+
+# Reads a results file: @{ ByN = @{ <case n> = <result object> }; Pending = <n of a case that never finished> }.
+function Read-LcCaseResults([string]$Path) {
+    $res = @{ ByN = @{}; Pending = $null }
+    if (-not (Test-Path -LiteralPath $Path)) { return $res }
+    foreach ($line in [IO.File]::ReadAllLines($Path)) {
+        if (-not $line.Trim()) { continue }
+        $o = $line | ConvertFrom-Json
+        if ($o.status -eq 'start') { $res.Pending = [int]$o.n } else { $res.ByN[[int]$o.n] = $o; $res.Pending = $null }
+    }
+    return $res
+}
+
+# Brute-force check (analyze, when tests/<slug>.brute.cpp exists). Builds the brute file as a bench exe of
+# its own ('brute', same harness), generates 200 random cases with n in [1, 10] (seed 1), takes the brute's
+# answers as the expected outputs and runs the solution's bench exe on them.
+# Returns @{ Cases; Mismatch = $null | @{ Input = <'Input: ...' line>; Got; Expected };
+# Crashed = $null | <case the brute crashed on>; TimedOut; Errors = <g++ output when a build failed> }.
+function Invoke-LcBruteCheck {
+    param(
+        [Parameter(Mandatory)][string]$SrcPath,
+        [Parameter(Mandatory)][string]$BrutePath,
+        [Parameter(Mandatory)]$Info,
+        [Parameter(Mandatory)][string]$SpecPath,
+        [switch]$AnyOrder,
+        [int]$TimeoutMs = 60000
+    )
+    $res = @{ Cases = 0; Mismatch = $null; Crashed = $null; TimedOut = $false; Errors = '' }
+    $harness = New-LcHarnessText -Info $Info
+    $bb = Build-LcExe -SrcPath $BrutePath -HarnessText $harness -UserText (New-LcUserText -SrcPath $BrutePath -Info $Info) -Flavor bench -Name brute
+    if (-not $bb.Ok) { $res.Errors = $bb.Errors; return $res }
+    # The analyze build: already up to date, so this only checks its stamps.
+    $main = Build-LcExe -SrcPath $SrcPath -HarnessText $harness -UserText (New-LcUserText -SrcPath $SrcPath -Info $Info) -Flavor bench -Name bench
+    if (-not $main.Ok) { $res.Errors = $main.Errors; return $res }
+
+    $dir = Split-Path -Parent $bb.Exe
+    $genPath = Join-Path $dir 'brute-gen.txt'
+    $casesPath = Join-Path $dir 'brute-cases.txt'
+    $bruteOut = Join-Path $dir 'brute-results.txt'
+    $mainOut = Join-Path $dir 'brute-main-results.txt'
+    foreach ($p in $genPath, $bruteOut, $mainOut) { Remove-Item -LiteralPath $p -ErrorAction SilentlyContinue }
+    & $bb.Exe gen $SpecPath $genPath --count 200 --max-n 10 --seed 1 2>&1 | Out-Null
+    if (-not (Test-Path -LiteralPath $genPath)) { $res.Errors = "brute force: gen failed (exit code $LASTEXITCODE)"; return $res }
+
+    # The generated cases: each one's lines between "case k" and "end".
+    $cases = New-Object Collections.ArrayList
+    $cur = $null
+    foreach ($l in [IO.File]::ReadAllLines($genPath)) {
+        if ($l -match '^case \d+$') { $cur = New-Object Collections.ArrayList }
+        elseif ($l -eq 'end') { [void]$cases.Add([string[]]$cur.ToArray()); $cur = $null }
+        elseif ($null -ne $cur) { [void]$cur.Add($l) }
+    }
+    $res.Cases = $cases.Count
+
+    $m = Start-Measured -Exe $bb.Exe -ArgumentList @('test', $genPath, $bruteOut) -TimeoutMs $TimeoutMs -NoStdout
+    $br = Read-LcCaseResults $bruteOut
+    $bad = $br.Pending
+    if ($null -eq $bad) {
+        for ($k = 1; $k -le $cases.Count; $k++) {
+            if (-not $br.ByN.ContainsKey($k) -or $br.ByN[$k].status -eq 'error') { $bad = $k; break }
+        }
+    }
+    if ($null -ne $bad -or $m.TimedOut -or $m.Code -ne 0) {
+        if ($null -eq $bad) { $bad = '?' }
+        $res.Crashed = $bad; $res.TimedOut = [bool]$m.TimedOut
+        return $res
+    }
+
+    $sb = New-Object Text.StringBuilder
+    for ($k = 1; $k -le $cases.Count; $k++) {
+        [void]$sb.Append("case $k`n")
+        foreach ($l in $cases[$k - 1]) { [void]$sb.Append("$l`n") }
+        [void]$sb.Append("expect $($br.ByN[$k].got)`nend`n")
+    }
+    [IO.File]::WriteAllText($casesPath, $sb.ToString(), (New-Object Text.UTF8Encoding $false))
+
+    $argv = @('test', $casesPath, $mainOut)
+    if ($AnyOrder) { $argv += '--any-order' }
+    $m = Start-Measured -Exe $main.Exe -ArgumentList $argv -TimeoutMs $TimeoutMs -NoStdout
+    $mr = Read-LcCaseResults $mainOut
+    for ($k = 1; $k -le $cases.Count; $k++) {
+        $r = $null
+        if ($mr.ByN.ContainsKey($k)) { $r = $mr.ByN[$k] }
+        if ($r -and $r.status -eq 'pass') { continue }
+        $got = if (-not $r) { if ($m.TimedOut) { '(timed out)' } else { '(crashed)' } }
+               elseif ($r.status -eq 'error') { [string]$r.error } else { [string]$r.got }
+        $lines = $cases[$k - 1]
+        if ($Info.Kind -eq 'design') {
+            $in = "Input`n" + (($lines | ForEach-Object { $_ -replace '^(ops|args) ', '' }) -join "`n")
+        } else {
+            $in = Format-LcInputLine -Info $Info -Values ([string[]]@($lines | Where-Object { $_.StartsWith('arg ') } | ForEach-Object { $_.Substring(4) }))
+        }
+        $res.Mismatch = @{ Input = $in; Got = $got; Expected = [string]$br.ByN[$k].got }
+        break
+    }
+    return $res
 }
