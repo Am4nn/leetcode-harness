@@ -1,7 +1,10 @@
 // Runs a LeetCode solution against a cases file and writes one JSON line per event to a results file.
-// The user's own stdout is never touched, so it can't mix with results. Relies on lc-io.h.
+// The user's own stdout is never touched, so it can't mix with results. Also has the bench and gen modes.
+// Relies on lc-io.h, lc-alloc.h and lc-gen.h.
 #ifndef LC_RUN_H
 #define LC_RUN_H
+
+#include <cxxabi.h>
 
 namespace lc {
 
@@ -104,34 +107,412 @@ template <class T> void judge(Result& r, const T& got, const Case& c, bool any_o
     }
 }
 
-struct TestCli {
-    std::string cases, results;
+struct Cli {
+    std::string mode, in, out;  // in: cases or spec file; out: results or cases file
     bool any_order = false;
+    unsigned long long seed = 0;
+    double max_ms = 0;
+    long long count = 0, max_n = 0, n = 0;  // gen: n > 0 fixes every case's size (--n), else uniform in [1, max_n]
 };
 
-// Parses `test <cases> <results> [--any-order]`. Returns 0, or the exit code after printing the problem.
-inline int parse_test_cli(int argc, char** argv, TestCli& cli) {
-    std::string mode = argc > 1 ? argv[1] : "";
-    if (mode == "bench" || mode == "profile" || mode == "gen") {
+// Parses the runner CLI (see formats.md). Returns 0, or the exit code after printing the problem.
+inline int parse_cli(int argc, char** argv, Cli& cli) {
+    static const std::string test_use = "test <cases> <results> [--any-order]",
+                             bench_use = "bench <spec> <results> --seed S --max-ms M",
+                             gen_use = "gen <spec> <out-cases> --count C (--max-n N | --n N) --seed S";
+    auto usage = [](const std::string& text) {
+        std::cerr << "usage: " << text << '\n';
+        return 2;
+    };
+    cli.mode = argc > 1 ? argv[1] : "";
+    if (cli.mode == "profile") {
         std::cerr << "mode not supported yet\n";
         return 2;
     }
-    bool ok = mode == "test" && (argc == 4 || (argc == 5 && std::string(argv[4]) == "--any-order"));
-    if (!ok) {
-        std::cerr << "usage: test <cases> <results> [--any-order]\n";
+    if (cli.mode == "test") {
+        if (!(argc == 4 || (argc == 5 && std::string(argv[4]) == "--any-order"))) return usage(test_use);
+        cli.in = argv[2];
+        cli.out = argv[3];
+        cli.any_order = argc == 5;
+        return 0;
+    }
+    if (cli.mode != "bench" && cli.mode != "gen") return usage(test_use + " | " + bench_use + " | " + gen_use);
+    bool bench = cli.mode == "bench";
+    const std::string& use = bench ? bench_use : gen_use;
+    if (argc < 4 || argc % 2) return usage(use);
+    cli.in = argv[2];
+    cli.out = argv[3];
+    std::set<std::string> seen;
+    for (int i = 4; i + 1 < argc; i += 2) {
+        std::string k = argv[i], v = argv[i + 1];
+        auto number = [&](auto& x) {
+            auto [e, ec] = std::from_chars(v.data(), v.data() + v.size(), x);
+            return ec == std::errc() && e == v.data() + v.size();
+        };
+        bool ok = false;
+        if (k == "--seed") ok = number(cli.seed);
+        else if (bench && k == "--max-ms") ok = number(cli.max_ms) && cli.max_ms > 0;
+        else if (!bench && k == "--count") ok = number(cli.count) && cli.count >= 0;
+        else if (!bench && k == "--max-n") ok = number(cli.max_n) && cli.max_n >= 1;
+        else if (!bench && k == "--n") ok = number(cli.n) && cli.n >= 1;
+        if (!ok || !seen.insert(k).second) return usage(use);
+    }
+    bool complete = seen.count("--seed") && (bench ? seen.count("--max-ms") > 0
+                                                   : seen.count("--count") && (seen.count("--max-n") || seen.count("--n")));
+    return complete ? 0 : usage(use);
+}
+
+// ---- bench and gen helpers ----
+
+// Keeps the compiler from dropping or moving a computation whose result is otherwise unused.
+template <class T> inline void keep(T& v) { asm volatile("" : : "g"(&v) : "memory"); }
+
+template <class T> struct is_tuple : std::false_type {};
+template <class... U> struct is_tuple<std::tuple<U...>> : std::true_type {};
+
+// A fresh copy of generated arguments (a value or a tuple of them); trees and lists are copied node by node.
+template <class T> T clone(const T& v) {
+    if constexpr (std::is_same_v<T, TreeNode*>) {
+        if (!v) return nullptr;
+        TreeNode* root = new TreeNode(v->val);
+        std::vector<std::pair<const TreeNode*, TreeNode*>> st{{v, root}};
+        while (!st.empty()) {
+            auto [s, d] = st.back();
+            st.pop_back();
+            if (s->left) st.push_back({s->left, d->left = new TreeNode(s->left->val)});
+            if (s->right) st.push_back({s->right, d->right = new TreeNode(s->right->val)});
+        }
+        return root;
+    } else if constexpr (std::is_same_v<T, ListNode*>) {
+        ListNode head;
+        ListNode* t = &head;
+        for (const ListNode* x = v; x; x = x->next) t = t->next = new ListNode(x->val);
+        return head.next;
+    } else if constexpr (is_tuple<T>::value) {
+        return std::apply([](const auto&... x) { return T{clone(x)...}; }, v);
+    } else if constexpr (is_vector_v<T>) {
+        using U = typename T::value_type;
+        if constexpr (std::is_pointer_v<U> || is_vector_v<U>) {
+            T out;
+            out.reserve(v.size());
+            for (const auto& x : v) out.push_back(clone(x));
+            return out;
+        } else {
+            return v;
+        }
+    } else {
+        return v;
+    }
+}
+
+// "[a,b,...]": the values in cases format.
+template <class Tuple> std::string show_tuple(const Tuple& t) {
+    std::string s = "[";
+    std::apply([&](const auto&... a) {
+        size_t k = 0;
+        ((s += (k++ ? "," : "") + show(a)), ...);
+    }, t);
+    return s + "]";
+}
+
+inline std::string num_text(double x) {
+    char b[48];
+    std::snprintf(b, sizeof b, "%.6f", x);
+    return b;
+}
+
+inline bool load_spec(const Cli& cli, Spec& spec) {
+    try {
+        spec = read_spec(cli.in);
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << e.what() << '\n';
+        return false;
+    }
+}
+
+// Method-call arguments in design bench/gen are generated at this size (clamped to their own len range),
+// so a sequence of n calls stays O(n) to build.
+inline constexpr long long design_arg_n = 16;
+
+// Tree/list copies made for timing are never freed (user code may restructure or free nodes), so reps per
+// size are capped to keep the generated nodes per size within this budget (ruling R17).
+inline constexpr long long node_budget = 2000000;
+
+// A 2-D size parameter's maxN (len_max^2 cells, R16) is capped here so a loose row limit like 10^5 can't
+// ask for 10^10 cells and run out of memory.
+inline constexpr long long grid_max_cells = 10000000;
+
+// The size bench reports for a generated size parameter: a size scalar's value; the total items of a
+// vector of containers (a grid's cells, a word list's characters); else the length or node count.
+// Other types report the requested n.
+template <class T> long long actual_size(const T& v, long long n) {
+    if constexpr (is_size_scalar_v<T>) {
+        return (long long)v;
+    } else if constexpr (is_vector_v<T>) {
+        if constexpr (is_generated_container<typename T::value_type>::value) {
+            long long s = 0;
+            for (const auto& x : v) s += length_of(x);
+            return s;
+        } else {
+            return (long long)v.size();
+        }
+    } else if constexpr (is_generated_container<T>::value) {
+        return length_of(v);
+    } else {
+        (void)v;
+        return n;
+    }
+}
+
+// Tree and list nodes in generated arguments (a value or a tuple of them).
+template <class T> long long nodes_in(const T& v) {
+    if constexpr (std::is_same_v<T, TreeNode*> || std::is_same_v<T, ListNode*>) {
+        return length_of(v);
+    } else if constexpr (is_tuple<T>::value) {
+        return std::apply([](const auto&... x) { return (0LL + ... + nodes_in(x)); }, v);
+    } else if constexpr (is_vector_v<T>) {
+        long long s = 0;
+        if constexpr (std::is_pointer_v<typename T::value_type> || is_vector_v<typename T::value_type>)
+            for (const auto& x : v) s += nodes_in(x);
+        return s;
+    } else {
+        (void)v;
+        return 0;
+    }
+}
+
+// Bench sizes, ascending: maxN, maxN/2, ... down to >= 8, at most 10. For a scalar size parameter with
+// maxN <= 64: up to 10 evenly spaced sizes from max(1, maxN/10) to maxN (ruling R5).
+inline std::vector<long long> bench_sizes(long long max_n, bool scalar) {
+    std::vector<long long> v;
+    max_n = std::max(max_n, 1LL);
+    if (scalar && max_n <= 64) {
+        long long lo = std::max(1LL, max_n / 10), k = std::min(10LL, max_n - lo + 1);
+        for (long long i = 0; i < k; ++i) {
+            long long n = k == 1 ? max_n : lo + ((max_n - lo) * i * 2 + (k - 1)) / (2 * (k - 1));
+            if (v.empty() || n > v.back()) v.push_back(n);
+        }
+    } else {
+        for (long long n = max_n; v.size() < 10 && (n >= 8 || v.empty()); n /= 2) v.push_back(n);
+        std::reverse(v.begin(), v.end());
+    }
+    return v;
+}
+
+// One prepared bench size. `n` is the generated input's actual size (what the results report), `max_reps`
+// the rep limit, and `once(AllocStats*) -> ms` runs one timed call (or design sequence) on fresh inputs.
+// Given an AllocStats, `once` resets the stats right before the timed part and fills count/bytes since
+// then and peak above the live bytes at the reset.
+template <class F> struct BenchSize {
+    long long n;
+    int max_reps;
+    F once;
+};
+
+// Runs bench over the schedule `sizes` and writes the results lines. `prepare(n)` returns a BenchSize.
+// A size whose actual n is not above the previous one is skipped (ruling R19).
+template <class Prepare> int bench_loop(const Cli& cli, const std::vector<long long>& sizes, bool design, Prepare prepare) {
+    std::ofstream out(cli.out, std::ios::binary);
+    if (!out) {
+        std::cerr << "can't write results file " << cli.out << '\n';
         return 2;
     }
-    cli.cases = argv[2];
-    cli.results = argv[3];
-    cli.any_order = argc == 5;
+    auto per_call = [&](long long n, double ms) {
+        return design ? ",\"per_call_us\":" + num_text(ms * 1000 / (double)n) : std::string();
+    };
+    auto capped = [&](long long n, double ms, bool predicted) {
+        out << "{\"capped\":true,\"n\":" << n << ",\"ms\":" << num_text(ms) << per_call(n, ms)
+            << (predicted ? ",\"predicted\":true" : "") << "}\n" << std::flush;
+    };
+    std::vector<std::pair<long long, double>> done;  // completed sizes and their min ms
+    std::optional<decltype(prepare(0LL))> last;       // the largest completed size, for the alloc run
+    long long cur = 0;
+    try {
+        for (long long sched : sizes) {
+            auto size = prepare(sched);
+            long long n = size.n;
+            if (n < 1 || (!done.empty() && n <= done.back().first)) continue;
+            cur = n;
+            if (done.size() >= 2) {
+                auto [n1, t1] = done[done.size() - 2];
+                auto [n2, t2] = done.back();
+                if (t1 > 0 && t2 > 0) {
+                    double t = t2 * std::pow(t2 / t1, std::log((double)n / (double)n2) / std::log((double)n2 / (double)n1));
+                    if (!(t <= 2 * cli.max_ms)) { capped(n, std::min(t, 1e12), true); break; }
+                }
+            }
+            out << "{\"status\":\"start\",\"n\":" << n << ",\"seed\":" << cli.seed << "}\n" << std::flush;
+            double best = 0, total = 0;
+            int reps = 0;
+            bool over = false;
+            while (true) {
+                double t = size.once(nullptr);
+                best = reps ? std::min(best, t) : t;
+                total += t;
+                ++reps;
+                if (reps == 1 && t > cli.max_ms) { over = true; break; }
+                if (total >= 30 || reps >= size.max_reps) break;
+            }
+            if (over) { capped(n, best, false); break; }
+            out << "{\"n\":" << n << ",\"ms\":" << num_text(best) << ",\"reps\":" << reps << per_call(n, best) << "}\n"
+                << std::flush;
+            done.push_back({n, best});
+            last.emplace(std::move(size));
+        }
+        if (last) {
+            cur = last->n;
+            AllocStats a{};
+            last->once(&a);
+            out << "{\"alloc\":{\"count\":" << a.count << ",\"bytes\":" << a.bytes << ",\"peak\":" << a.peak
+                << "},\"n\":" << cur << "}\n";
+        }
+    } catch (const std::exception& e) {
+        out << "{\"n\":" << cur << ",\"status\":\"error\",\"error\":\"" << json_escape(std::string("exception: ") + e.what())
+            << "\"}\n";
+    } catch (...) {
+        out << "{\"n\":" << cur << ",\"status\":\"error\",\"error\":\"exception: unknown\"}\n";
+    }
+    return 0;
+}
+
+// Timing for one call: the start resets the alloc stats when asked; the stop reads them back.
+struct Stopwatch {
+    AllocStats* alloc;
+    uint64_t base = 0;
+    std::chrono::steady_clock::time_point t0{};
+    void start() {
+        if (alloc) {
+            reset_alloc_stats();
+            base = alloc_stats().live;
+        }
+        t0 = std::chrono::steady_clock::now();
+    }
+    double stop() {
+        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        if (alloc) {
+            const AllocStats& s = alloc_stats();
+            *alloc = {s.count, s.bytes, s.live, s.peak - base};
+        }
+        return ms;
+    }
+};
+
+template <class S, class R, class M, class... A>
+int bench_function(const Cli& cli, M method, const std::vector<std::string>& names) {
+    Spec spec;
+    if (!load_spec(cli, spec)) return 2;
+    using Args = std::tuple<std::remove_cvref_t<A>...>;
+    using Seq = std::index_sequence_for<A...>;
+
+    // The size parameter decides the schedule: maxN is val_max for a scalar, len_max^2 cells for a 2-D
+    // vector (R16), else len_max; sizes below its minimum are dropped (R19).
+    int size_i = -1;
+    bool scalar = false, grid = false;
+    [&]<size_t... I>(std::index_sequence<I...>) {
+        auto one = [&]<size_t J>(std::integral_constant<size_t, J>) {
+            using T = std::tuple_element_t<J, Args>;
+            if (size_i >= 0 || J >= names.size() || names[J] != spec.size) return;
+            size_i = (int)J;
+            scalar = is_size_scalar_v<T>;
+            if constexpr (is_vector_v<T>) grid = is_vector_v<typename T::value_type>;
+        };
+        (one(std::integral_constant<size_t, I>{}), ...);
+    }(Seq{});
+    ParamSpec p;
+    if (auto it = spec.params.find(spec.size); size_i >= 0 && it != spec.params.end()) p = it->second;
+    const auto& lim_max = scalar ? p.val_max : p.len_max;
+    const auto& lim_min = scalar ? p.val_min : p.len_min;
+    long long max_n = lim_max.value_or(100000), min_n = lim_min.value_or(1);
+    if (grid) {
+        max_n = lim_max ? std::min(*lim_max * *lim_max, grid_max_cells) : 100000;
+        min_n = std::min(min_n * min_n, max_n);
+    }
+    std::vector<long long> sizes;
+    for (long long n : bench_sizes(max_n, scalar))
+        if (n >= min_n) sizes.push_back(n);
+    if (sizes.empty()) sizes.push_back(std::max(max_n, 1LL));
+
+    auto prepare = [&](long long n) {
+        std::mt19937_64 rng(cli.seed);
+        Args args = generate_args<std::remove_cvref_t<A>...>(spec, names, n, rng);
+        long long actual = n;
+        [&]<size_t... I>(std::index_sequence<I...>) {
+            ((I == (size_t)size_i ? (void)(actual = actual_size(std::get<I>(args), n)) : void()), ...);
+        }(Seq{});
+        long long nodes = nodes_in(args);
+        int max_reps = nodes ? (int)std::clamp(node_budget / nodes - 1, 1LL, 50LL) : 50;
+        return BenchSize{actual, max_reps, [method, args = std::move(args)](AllocStats* alloc) -> double {
+            Args a = clone(args);
+            S sol;
+            Stopwatch w{alloc};
+            auto call = [&]<size_t... I>(std::index_sequence<I...>) -> decltype(auto) {
+// GCC false positive: on an empty Solution it flags the (dead) virtual-call branch of a member pointer call.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+                return (sol.*method)(std::get<I>(a)...);
+#pragma GCC diagnostic pop
+            };
+            keep(a);
+            w.start();
+            if constexpr (std::is_void_v<R>) {
+                call(Seq{});
+                keep(a);
+                return w.stop();
+            } else {
+                auto&& got = call(Seq{});
+                keep(got);
+                return w.stop();
+            }
+        }};
+    };
+    return bench_loop(cli, sizes, false, prepare);
+}
+
+// Opens the gen output; on failure prints the problem.
+inline bool open_cases_out(const Cli& cli, std::ofstream& out) {
+    out.open(cli.out, std::ios::binary);
+    if (!out) std::cerr << "can't write cases file " << cli.out << '\n';
+    return (bool)out;
+}
+
+// The size n of each gen case, uniform in [1, max-n], drawn from a generator of their own. Case i's values
+// then come from a generator seeded with just seed + i, as bench's do from its seed, so at the same size
+// and seed both produce the same input.
+// With --n, every case uses exactly that n (R14), so `gen --count 1 --n N --seed S` reproduces bench's input
+// at size N and seed S.
+inline std::vector<long long> gen_sizes(const Cli& cli) {
+    std::mt19937_64 pick(cli.seed ^ 0x9E3779B97F4A7C15ULL);
+    std::uniform_int_distribution<long long> dist(1, std::max(cli.max_n, 1LL));
+    std::vector<long long> v;
+    for (long long i = 0; i < cli.count; ++i) v.push_back(cli.n > 0 ? cli.n : dist(pick));
+    return v;
+}
+
+template <class... A> int gen_function(const Cli& cli, const std::vector<std::string>& names) {
+    Spec spec;
+    if (!load_spec(cli, spec)) return 2;
+    std::ofstream out;
+    if (!open_cases_out(cli, out)) return 2;
+    std::vector<long long> sizes = gen_sizes(cli);
+    for (long long i = 0; i < cli.count; ++i) {
+        long long n = sizes[i];
+        std::mt19937_64 rng(cli.seed + (unsigned long long)i);
+        auto args = generate_args<std::remove_cvref_t<A>...>(spec, names, n, rng);
+        out << "case " << i + 1 << '\n';
+        std::apply([&](const auto&... a) { ((out << "arg " << show(a) << '\n'), ...); }, args);
+        out << "end\n";
+    }
     return 0;
 }
 
 template <class S, class R, class M, class... A>
 int run_function_impl(int argc, char** argv, M method, const std::vector<std::string>& names, int out_param) {
     constexpr size_t N = sizeof...(A);
-    TestCli cli;
-    if (int code = parse_test_cli(argc, argv, cli)) return code;
+    Cli cli;
+    if (int code = parse_cli(argc, argv, cli)) return code;
+    if (cli.mode == "bench") return bench_function<S, R, M, A...>(cli, method, names);
+    if (cli.mode == "gen") return gen_function<A...>(cli, names);
 
     if constexpr (std::is_void_v<R>) {
         constexpr bool mut[] = {false, (std::is_lvalue_reference_v<A> && !std::is_const_v<std::remove_reference_t<A>>)...};
@@ -146,14 +527,14 @@ int run_function_impl(int argc, char** argv, M method, const std::vector<std::st
 
     std::vector<Case> cases;
     try {
-        cases = read_cases(cli.cases);
+        cases = read_cases(cli.in);
     } catch (const std::exception& e) {
         std::cerr << e.what() << '\n';
         return 2;
     }
-    std::ofstream out(cli.results, std::ios::binary);
+    std::ofstream out(cli.out, std::ios::binary);
     if (!out) {
-        std::cerr << "can't write results file " << cli.results << '\n';
+        std::cerr << "can't write results file " << cli.out << '\n';
         return 2;
     }
 
@@ -278,10 +659,14 @@ template <class Tuple> Tuple parse_args(const std::vector<std::string>& texts, c
 
 template <class C> struct Method {
     std::vector<std::string> names;
+    size_t arity = 0;  // number of parameters
     // Returns show(result), or "null" for void.
     std::function<std::string(C&, const std::vector<std::string>& args)> call;
     // Parses both texts into the return type and compares them.
     std::function<bool(const std::string& got, const std::string& want)> same;
+    // For bench/gen: random arguments (by parameter name) at size n. Returns a call that uses them, and
+    // when `text` is given, writes them in cases format ("[a,b]").
+    std::function<std::function<void(C&)>(const Spec&, long long n, std::mt19937_64&, std::string* text)> random;
 };
 
 namespace detail {
@@ -289,6 +674,7 @@ namespace detail {
 template <class C, class R, class M, class... A> Method<C> make_method(M m, std::vector<std::string> names) {
     Method<C> mt;
     mt.names = names;
+    mt.arity = sizeof...(A);
     mt.call = [m, names](C& obj, const std::vector<std::string>& texts) -> std::string {
         using Args = std::tuple<std::remove_cvref_t<A>...>;
         Args args = parse_args<Args>(texts, names);
@@ -314,7 +700,108 @@ template <class C, class R, class M, class... A> Method<C> make_method(M m, std:
             return equal(parse<T>(got), parse<T>(want), false);
         }
     };
+    mt.random = [m, names](const Spec& spec, long long n, std::mt19937_64& rng,
+                           std::string* text) -> std::function<void(C&)> {
+        auto args = generate_args<std::remove_cvref_t<A>...>(spec, names, n, rng);
+        if (text) *text = show_tuple(args);
+        return [m, args](C& obj) mutable {
+            std::apply([&](auto&... a) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+                if constexpr (std::is_void_v<R>) {
+                    (obj.*m)(a...);
+                } else {
+                    auto&& got = (obj.*m)(a...);
+                    keep(got);
+                }
+#pragma GCC diagnostic pop
+            }, args);
+        };
+    };
     return mt;
+}
+
+// The class name as written in the source (ops[0] of a design case), from the type's RTTI name.
+template <class C> std::string class_name() {
+    int status = 0;
+    char* d = abi::__cxa_demangle(typeid(C).name(), nullptr, nullptr, &status);
+    std::string s = status == 0 && d ? d : typeid(C).name();
+    std::free(d);
+    return s;
+}
+
+template <class C> using MethodList = std::vector<std::pair<std::string, const Method<C>*>>;
+
+// One random design sequence at n calls: constructor arguments, then n random methods with random
+// arguments. The first half (rounded up) of the calls only use methods that take arguments (the "adders",
+// e.g. push/put/addNum), so methods like pop/top/findMedian never meet an empty object; the rest pick
+// uniformly from all methods (ruling R18). Fills `ops`/`args_text` (cases format) when given. Bench and
+// gen share it, so a seed gives the same sequence in both.
+template <class C, class... CtorA>
+std::tuple<std::remove_cvref_t<CtorA>...> random_sequence(const Spec& spec, const std::vector<std::string>& ctor_names,
+                                                         const MethodList<C>& ms, long long n, std::mt19937_64& rng,
+                                                         std::vector<std::function<void(C&)>>& calls,
+                                                         std::vector<std::string>* ops, std::string* args_text) {
+    auto ct = generate_args<std::remove_cvref_t<CtorA>...>(spec, ctor_names, n, rng);
+    if (args_text) *args_text = "[" + show_tuple(ct);
+    calls.clear();
+    calls.reserve(ms.empty() ? 0 : (size_t)n);
+    std::vector<size_t> adders;
+    for (size_t j = 0; j < ms.size(); ++j)
+        if (ms[j].second->arity > 0) adders.push_back(j);
+    std::string t;
+    for (long long k = 0; k < n && !ms.empty(); ++k) {
+        bool add = k < (n + 1) / 2 && !adders.empty();
+        size_t pick = std::uniform_int_distribution<size_t>(0, (add ? adders.size() : ms.size()) - 1)(rng);
+        const auto& [name, mt] = ms[add ? adders[pick] : pick];
+        calls.push_back(mt->random(spec, design_arg_n, rng, args_text ? &t : nullptr));
+        if (ops) ops->push_back(name);
+        if (args_text) *args_text += "," + t;
+    }
+    if (args_text) *args_text += "]";
+    return ct;
+}
+
+template <class C, class... CtorA>
+int bench_design(const Cli& cli, const std::vector<std::string>& ctor_names, const MethodList<C>& ms) {
+    Spec spec;
+    if (!load_spec(cli, spec)) return 2;
+    auto prepare = [&](long long n) {
+        // The sequence is rebuilt from the seed for every run (untimed), so each run gets fresh arguments.
+        return BenchSize{n, 50, [&, n](AllocStats* alloc) -> double {
+            std::mt19937_64 rng(cli.seed);
+            std::vector<std::function<void(C&)>> calls;
+            auto ct = random_sequence<C, CtorA...>(spec, ctor_names, ms, n, rng, calls, nullptr, nullptr);
+            Stopwatch w{alloc};
+            keep(ct);
+            keep(calls);
+            w.start();
+            std::unique_ptr<C> obj = std::apply([](auto&... a) { return std::make_unique<C>(a...); }, ct);
+            for (auto& f : calls) f(*obj);
+            keep(obj);
+            return w.stop();
+        }};
+    };
+    return bench_loop(cli, bench_sizes(spec.calls.value_or(100000), false), true, prepare);
+}
+
+template <class C, class... CtorA>
+int gen_design(const Cli& cli, const std::vector<std::string>& ctor_names, const MethodList<C>& ms) {
+    Spec spec;
+    if (!load_spec(cli, spec)) return 2;
+    std::ofstream out;
+    if (!open_cases_out(cli, out)) return 2;
+    const std::string cls = class_name<C>();
+    std::vector<long long> sizes = gen_sizes(cli);
+    std::vector<std::function<void(C&)>> calls;
+    for (long long i = 0; i < cli.count; ++i) {
+        std::mt19937_64 rng(cli.seed + (unsigned long long)i);
+        std::vector<std::string> ops{cls};
+        std::string args;
+        random_sequence<C, CtorA...>(spec, ctor_names, ms, sizes[i], rng, calls, &ops, &args);
+        out << "case " << i + 1 << "\nops " << show(ops) << "\nargs " << args << "\nend\n";
+    }
+    return 0;
 }
 
 }  // namespace detail
@@ -329,18 +816,24 @@ template <class C, class R, class... A> Method<C> method(R (C::*m)(A...) const, 
 
 template <class C, class... CtorA>
 int run_design(int argc, char** argv, std::vector<std::string> ctor_names, std::map<std::string, Method<C>> methods) {
-    detail::TestCli cli;
-    if (int code = detail::parse_test_cli(argc, argv, cli)) return code;
+    detail::Cli cli;
+    if (int code = detail::parse_cli(argc, argv, cli)) return code;
+    if (cli.mode == "bench" || cli.mode == "gen") {
+        detail::MethodList<C> ms;
+        for (const auto& [name, mt] : methods) ms.push_back({name, &mt});
+        return cli.mode == "bench" ? detail::bench_design<C, CtorA...>(cli, ctor_names, ms)
+                                   : detail::gen_design<C, CtorA...>(cli, ctor_names, ms);
+    }
     std::vector<Case> cases;
     try {
-        cases = read_cases(cli.cases);
+        cases = read_cases(cli.in);
     } catch (const std::exception& e) {
         std::cerr << e.what() << '\n';
         return 2;
     }
-    std::ofstream out(cli.results, std::ios::binary);
+    std::ofstream out(cli.out, std::ios::binary);
     if (!out) {
-        std::cerr << "can't write results file " << cli.results << '\n';
+        std::cerr << "can't write results file " << cli.out << '\n';
         return 2;
     }
 
