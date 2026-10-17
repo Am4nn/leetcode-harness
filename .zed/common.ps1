@@ -39,12 +39,14 @@ function Explain([int]$code) {
 # readable even when the program exits instantly (Start-Process loses them).
 # -StdinFile is copied to the program's stdin; without it stdin is inherited.
 # -TimeoutMs 0 means no timeout; on timeout the process tree is killed and Code is $null.
+# -NoStdout discards the program's stdout (LeetCode analyze: debug prints would flood the terminal).
 function Start-Measured {
     param(
         [Parameter(Mandatory)][string]$Exe,
         [string[]]$ArgumentList = @(),
         [string]$StdinFile,
-        [int]$TimeoutMs = 0
+        [int]$TimeoutMs = 0,
+        [switch]$NoStdout
     )
     $psi = New-Object Diagnostics.ProcessStartInfo $Exe
     $psi.UseShellExecute = $false
@@ -53,9 +55,11 @@ function Start-Measured {
     }
     $psi.Arguments = $quoted -join ' '
     $psi.RedirectStandardInput = [bool]$StdinFile
+    $psi.RedirectStandardOutput = [bool]$NoStdout
     # Otherwise .NET writes a UTF-8 BOM (ef bb bf) before the file and the first cin >> fails.
     if ($StdinFile) { [Console]::InputEncoding = New-Object Text.UTF8Encoding $false }
     $p = [Diagnostics.Process]::Start($psi)
+    if ($NoStdout) { [void]$p.StandardOutput.BaseStream.CopyToAsync([IO.Stream]::Null) }
     if ($StdinFile) {
         $fs = [IO.File]::OpenRead($StdinFile)
         try { $fs.CopyTo($p.StandardInput.BaseStream) } catch {}  # the program may exit before reading it all

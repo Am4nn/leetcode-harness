@@ -193,3 +193,58 @@ function Get-LcTleVerdict([double]$EstMs) {
     if ($EstMs -le 1000) { return 'borderline' }
     return 'likely TLE'
 }
+
+# The design per-call label from the fit of a whole n-call sequence: total O(n) is O(1) per call.
+function Get-LcPerCallLabel([string]$Label) {
+    switch ($Label) {
+        'O(1)'       { return 'O(1)' }
+        'O(log n)'   { return 'O(1)' }
+        'O(n)'       { return 'O(1)' }
+        'O(n log n)' { return 'O(log n)' }
+        'O(n^2)'     { return 'O(n)' }
+        'O(n^3)'     { return 'O(n^2)' }
+    }
+    return $Label
+}
+
+# Parses bench results lines. Returns @{ Points = @(@{ n; ms }) (completed sizes, plus a measured cap,
+# which is a real one-run timing); Capped = @{ n; ms; Predicted } or $null; Alloc = @{ count; bytes; peak; n }
+# or $null; Pending = @{ n; seed } for a size that started and never finished (crash or kill), else $null;
+# Error = @{ n; seed; error } when the solution threw, else $null }.
+function Read-LcBenchResults([string[]]$Lines) {
+    $res = @{ Points = @(); Capped = $null; Alloc = $null; Pending = $null; Error = $null }
+    $seed = 0
+    foreach ($line in @($Lines)) {
+        if (-not $line -or -not $line.Trim()) { continue }
+        try { $o = $line | ConvertFrom-Json } catch { continue }
+        if ($o.status -eq 'start') { $seed = $o.seed; $res.Pending = @{ n = [long]$o.n; seed = $o.seed }; continue }
+        if ($o.status -eq 'error') { $res.Error = @{ n = [long]$o.n; seed = $seed; error = [string]$o.error }; $res.Pending = $null; continue }
+        if ($null -ne $o.alloc) {
+            $res.Alloc = @{ count = [long]$o.alloc.count; bytes = [long]$o.alloc.bytes; peak = [long]$o.alloc.peak; n = [long]$o.n }
+            continue
+        }
+        $res.Pending = $null
+        if ($o.capped) {
+            $res.Capped = @{ n = [long]$o.n; ms = [double]$o.ms; Predicted = [bool]$o.predicted }
+            if ($o.predicted) { continue }
+        }
+        $res.Points += @{ n = [long]$o.n; ms = [double]$o.ms }
+    }
+    return $res
+}
+
+function Format-LcDuration([double]$Ms) {
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    if ($Ms -ge 1e9) { return ($Ms / 1000).ToString('0.0e+0', $inv) + ' s' }
+    if ($Ms -ge 1000) { return ($Ms / 1000).ToString('0.0', $inv) + ' s' }
+    if ($Ms -ge 100) { return $Ms.ToString('0', $inv) + ' ms' }
+    if ($Ms -ge 10) { return $Ms.ToString('0.0', $inv) + ' ms' }
+    return $Ms.ToString('0.00', $inv) + ' ms'
+}
+
+function Format-LcBytes([long]$Bytes) {
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    if ($Bytes -ge 104858) { return ($Bytes / 1048576.0).ToString('0.0', $inv) + ' MB' }
+    if ($Bytes -ge 1024) { return ($Bytes / 1024.0).ToString('0.0', $inv) + ' KB' }
+    return "$Bytes B"
+}

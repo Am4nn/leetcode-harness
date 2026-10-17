@@ -64,4 +64,35 @@
     Assert-Equal (Get-LcTleVerdict 400) 'ok'
     Assert-Equal (Get-LcTleVerdict 800) 'borderline'
     Assert-Equal (Get-LcTleVerdict 1500) 'likely TLE'
+
+    # Bench results: completed sizes, a measured cap (a real point) vs a predicted one, alloc, crash.
+    $b = Read-LcBenchResults @('{"status":"start","n":8,"seed":1}', '{"n":8,"ms":0.5,"reps":50}',
+        '{"status":"start","n":16,"seed":1}', '{"n":16,"ms":1.5,"reps":20}',
+        '{"status":"start","n":32,"seed":1}', '{"capped":true,"n":32,"ms":2500}',
+        '{"alloc":{"count":3,"bytes":800000,"peak":700000},"n":16}')
+    Assert-Equal (@($b.Points | ForEach-Object { "$($_.n):$($_.ms)" }) -join ',') '8:0.5,16:1.5,32:2500'
+    Assert-True ($b.Capped.n -eq 32 -and -not $b.Capped.Predicted) 'measured cap'
+    Assert-True ($null -eq $b.Pending -and $null -eq $b.Error) 'a capped size is not pending'
+    Assert-Equal "$($b.Alloc.count)|$($b.Alloc.bytes)|$($b.Alloc.peak)|$($b.Alloc.n)" '3|800000|700000|16'
+    $b = Read-LcBenchResults @('{"status":"start","n":8,"seed":7}', '{"n":8,"ms":0.5,"reps":50,"per_call_us":62.5}',
+        '{"capped":true,"n":16,"ms":9000,"per_call_us":562500,"predicted":true}')
+    Assert-Equal @($b.Points).Count 1
+    Assert-True ($b.Capped.Predicted -and $b.Capped.n -eq 16) 'predicted cap'
+    $b = Read-LcBenchResults @('{"status":"start","n":8,"seed":7}', '{"n":8,"ms":0.5,"reps":50}', '{"status":"start","n":16,"seed":7}')
+    Assert-Equal "$($b.Pending.n)|$($b.Pending.seed)" '16|7'
+    $b = Read-LcBenchResults @('{"status":"start","n":8,"seed":3}', '{"n":8,"status":"error","error":"exception: boom"}')
+    Assert-Equal "$($b.Error.n)|$($b.Error.seed)|$($b.Error.error)" '8|3|exception: boom'
+
+    Assert-Equal (Get-LcPerCallLabel 'O(n)') 'O(1)'
+    Assert-Equal (Get-LcPerCallLabel 'O(1)') 'O(1)'
+    Assert-Equal (Get-LcPerCallLabel 'O(n log n)') 'O(log n)'
+    Assert-Equal (Get-LcPerCallLabel 'O(n^2)') 'O(n)'
+
+    Assert-Equal (Format-LcDuration 0.0123) '0.01 ms'
+    Assert-Equal (Format-LcDuration 12.34) '12.3 ms'
+    Assert-Equal (Format-LcDuration 456.7) '457 ms'
+    Assert-Equal (Format-LcDuration 4200) '4.2 s'
+    Assert-Equal (Format-LcBytes 800000) '0.8 MB'
+    Assert-Equal (Format-LcBytes 23720) '23.2 KB'
+    Assert-Equal (Format-LcBytes 12) '12 B'
 }

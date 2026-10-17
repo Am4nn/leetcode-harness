@@ -1,6 +1,6 @@
 # LeetCode harness for the file open in Zed (leetcode-solves/<slug>.cpp).
 #   -Mode test     run the cases in tests/<slug>.txt; the first run fetches the problem and writes that file
-#   -Mode analyze  complexity / TLE report (not implemented yet)
+#   -Mode analyze  complexity estimate, TLE verdict and allocations from timed random inputs (bench)
 [CmdletBinding(PositionalBinding = $false)]
 param(
     [ValidateSet('test', 'analyze')][string]$Mode = 'test',
@@ -77,9 +77,8 @@ function Complete-LcJourney([int]$code) {
         $note = [Console]::ReadLine()
         if ($note -and $note.Trim()) { Add-LcEvent 'note' @{ text = $note.Trim() } }
     }
+    Update-LcJourney
     $metaDir = Join-Path $testsDir '.meta'
-    if ($script:jStale) { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $metaDir }
-    else { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $metaDir -Slug $slug -Events $script:events }
     if ($solved -and -not $NoCommit) {
         $msg = "solve: $slug"
         if ($q -and $q.difficulty) { $msg += " ($($q.difficulty))" }
@@ -94,6 +93,31 @@ function Complete-LcJourney([int]$code) {
     Finish $code
 }
 
+# journey.md: this slug's row, or everything when events.jsonl was newer than journey.md (R31).
+function Update-LcJourney {
+    $metaDir = Join-Path $testsDir '.meta'
+    if ($script:jStale) { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $metaDir }
+    else { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $metaDir -Slug $slug -Events $script:events }
+}
+
+# A failed build: one line for a parameter type the harness can't handle, else g++'s output.
+function Write-LcBuildFailure($build) {
+    $t = $null
+    if ($build.Stage -eq 'harness') {
+        # The harness only sees the signature's types: a type lc.h can't read, or one only the solution defines.
+        # An undeclared type comes first: g++ then goes on with int in its place.
+        if ($build.Errors -match "error: '(\w+)' (was not declared|does not name a type|has not been declared)") { $t = $Matches[1] }
+        elseif ($build.Errors -match "always_false<(.+?) ?>' evaluates") { $t = $Matches[1] }
+        elseif ($build.Errors -match '\[with T = ([^;\]]+)') { $t = $Matches[1] }
+        elseif ($build.Errors -match 'lc: unsupported parameter type') { $t = '?' }
+    }
+    if ($t) {
+        Write-Host "This problem uses a parameter type the harness doesn't support yet: $t" -ForegroundColor Red
+    } else {
+        Write-Host $build.Errors
+    }
+}
+
 function Exit-Lc([int]$code) {
     if ($null -ne $script:jRun) { Complete-LcJourney $code }
     if ($NoWait) { exit $code }
@@ -104,7 +128,6 @@ $src = ($Rest -join ' ').Trim('"')
 if (-not $src -or -not (Test-Path -LiteralPath $src -PathType Leaf)) { Write-Host "No such file: '$src'" -ForegroundColor Red; Exit-Lc 1 }
 $src = (Resolve-Path -LiteralPath $src).ProviderPath
 if ([IO.Path]::GetExtension($src) -ne '.cpp') { Write-Host "Not a .cpp file: $src" -ForegroundColor Red; Exit-Lc 1 }
-if ($Mode -eq 'analyze') { Write-Host 'analyze: not implemented yet'; Exit-Lc 1 }
 
 $slug = [IO.Path]::GetFileNameWithoutExtension($src)
 $testsDir = Join-Path (Split-Path -Parent $src) 'tests'
@@ -121,13 +144,16 @@ $fetch = Get-LcCachedQuestion -TestsDir $testsDir -Slug $slug -Offline:$Offline
 if ($fetch.Fetched) { Add-LcEvent 'fetch' (Get-LcFetchEventData $fetch.Question) }
 $q = $fetch.Question
 if ($q -and -not $q.metaData) { $q = $null }
+# Analyze prints only its report, so no title line.
 if ($q) {
-    $tags = @($q.topicTags | ForEach-Object { $_.name }) -join ', '
-    $about = "#$($q.questionFrontendId) $($q.difficulty)"
-    if ($tags) { $about += " - $tags" }
-    Write-Host "$slug  ($about)" -ForegroundColor Cyan
+    if ($Mode -eq 'test') {
+        $tags = @($q.topicTags | ForEach-Object { $_.name }) -join ', '
+        $about = "#$($q.questionFrontendId) $($q.difficulty)"
+        if ($tags) { $about += " - $tags" }
+        Write-Host "$slug  ($about)" -ForegroundColor Cyan
+    }
 } else {
-    Write-Host $slug -ForegroundColor Cyan
+    if ($Mode -eq 'test') { Write-Host $slug -ForegroundColor Cyan }
     if ($fetch.NotProblem) { Write-Host "(not a LeetCode problem: $slug)" -ForegroundColor DarkGray }
     elseif ($fetch.Tried) { Write-Host "Couldn't fetch $slug from LeetCode ($LcFetchError)." -ForegroundColor DarkGray }
 }
@@ -176,6 +202,110 @@ if ($fromSource) {
     if ($problem) { Write-Host $problem -ForegroundColor Red; Exit-Lc 1 }
 }
 
+# ---- analyze: bench on seeded random inputs, complexity fit, TLE verdict, allocations ----
+if ($Mode -eq 'analyze') {
+    . (Join-Path $PSScriptRoot 'lc\analyze.ps1')
+    $constraints = @()
+    if (Test-Path -LiteralPath $testFile) { $constraints = Get-LcConstraints ([IO.File]::ReadAllText($testFile, [Text.Encoding]::UTF8)) }
+    $spec = ConvertTo-LcSpec -Constraints $constraints -Info $info
+    $build = Build-LcExe -SrcPath $src -HarnessText (New-LcHarnessText -Info $info) -UserText (New-LcUserText -SrcPath $src -Info $info) -Flavor bench -Name bench
+    if (-not $build.Ok) { Write-LcBuildFailure $build; Exit-Lc 1 }
+    $buildDir = Split-Path -Parent $build.Exe
+    $specPath = Join-Path $buildDir 'bench-spec.txt'
+    $resultsPath = Join-Path $buildDir 'bench-results.txt'
+    [IO.File]::WriteAllText($specPath, $spec.Text, $utf8)
+    Remove-Item -LiteralPath $resultsPath -ErrorAction SilentlyContinue
+    # R5 backstop: bench caps itself at ~2 s per size; a run still going after 60 s (-TimeoutMs) is killed.
+    $limitMs = 60000
+    if ($PSBoundParameters.ContainsKey('TimeoutMs')) { $limitMs = $TimeoutMs }
+    $seed = 1
+    $capMs = 2000
+    $m = Start-Measured -Exe $build.Exe -ArgumentList @('bench', $specPath, $resultsPath, '--seed', "$seed", '--max-ms', "$capMs") -TimeoutMs $limitMs -NoStdout
+    $lines = @()
+    if (Test-Path -LiteralPath $resultsPath) { $lines = [IO.File]::ReadAllLines($resultsPath) }
+    $b = Read-LcBenchResults $lines
+    $crash = $b.Error
+    if (-not $crash -and -not $m.TimedOut -and $m.Code -ne 0) {
+        if ($m.Code -eq 2 -and -not $b.Pending) { Exit-Lc 1 }  # the runner printed the problem
+        $crash = $b.Pending
+        # No size pending: the untimed allocation rerun of the largest finished size crashed.
+        if (-not $crash -and @($b.Points).Count) { $crash = @{ n = @($b.Points)[-1].n; seed = $seed } }
+        if (-not $crash) { Write-Host "  CRASH: $(Explain $m.Code)" -ForegroundColor Red; Exit-Lc 1 }
+    }
+    if ($crash) {
+        Write-Host "Your solution crashed on a random input of size $($crash.n) (random inputs only follow ranges, sorted and distinct, so they may break other promises)." -ForegroundColor Red
+        # R14: gen at exactly that size and seed rebuilds the input bench used.
+        $genPath = Join-Path $buildDir 'bench-crash.txt'
+        & $build.Exe gen $specPath $genPath --count 1 --n $crash.n --seed $crash.seed 2>&1 | Out-Null
+        if (Test-Path -LiteralPath $genPath) {
+            $vals = @(); $ops = ''; $dargs = ''
+            foreach ($l in [IO.File]::ReadAllLines($genPath)) {
+                if ($l.StartsWith('arg ')) { $vals += $l.Substring(4) }
+                elseif ($l.StartsWith('ops ')) { $ops = $l.Substring(4) }
+                elseif ($l.StartsWith('args ')) { $dargs = $l.Substring(5) }
+            }
+            if ($info.Kind -eq 'design') { Write-Host "Input`n$ops`n$dargs" }
+            else { Write-Host (Format-LcInputLine -Info $info -Values ([string[]]$vals)) }
+        }
+        foreach ($a in $spec.Assumed) { Write-Host $a -ForegroundColor DarkGray }
+        Exit-Lc 1
+    }
+
+    $design = $info.Kind -eq 'design'
+    $fit = Get-LcComplexity -Points $b.Points
+    $stopped = $m.TimedOut -or $null -ne $b.Capped
+    if (-not $fit.TooFast) { $cx = $fit.Label; if ($design) { $cx = Get-LcPerCallLabel $cx }; $what = "looks $cx" }
+    elseif ($stopped) { $cx = 'too few sizes to tell'; $what = $cx }
+    else { $cx = 'too fast to measure'; $what = $cx }
+    if ($design -and -not $fit.TooFast) { $cx += ' per call' }
+    $head = if ($design) { 'Per call: ' } else { 'Complexity: ' }
+    Write-Host "$head$what (random inputs; worst case may differ)"
+    $pts = @($b.Points)
+    if ($pts.Count) { Write-Host ('  ' + (@($pts | ForEach-Object { "n=$($_.n) $(Format-LcDuration $_.ms)" }) -join ' | ')) }
+    if ($m.TimedOut) {
+        $n = '?'
+        if ($b.Pending) { $n = $b.Pending.n }
+        Write-Host ("  stopped at n={0}: still running after {1} s" -f $n, ($limitMs / 1000))
+    } elseif ($b.Capped -and $b.Capped.Predicted) {
+        Write-Host "  stopped before n=$($b.Capped.n) (est. $(Format-LcDuration $b.Capped.ms), over the $($capMs / 1000) s cap)"
+    } elseif ($b.Capped) {
+        Write-Host "  stopped after n=$($b.Capped.n) (over the $($capMs / 1000) s cap)"
+    }
+
+    # The time at the largest n: measured when bench got there, else the fit's estimate; never below a cap.
+    $maxN = $spec.MaxN
+    $atMax = @($pts | Where-Object { $_.n -ge $maxN })
+    if ($atMax.Count) { $est = [double]$atMax[-1].ms }
+    elseif ($fit.TooFast) { $est = 0.0; if ($pts.Count) { $est = [double]$pts[-1].ms } }
+    else { $est = Get-LcEstimateMs -Fit $fit -N $maxN }
+    $prefix = ''
+    if ($b.Capped -and $est -lt $b.Capped.ms) { $est = $b.Capped.ms }
+    if ($m.TimedOut -and $est -lt $limitMs) { $est = [double]$limitMs; $prefix = '> ' }
+    $verdict = Get-LcTleVerdict $est
+    $color = switch ($verdict) { 'ok' { 'Green' } 'borderline' { 'Yellow' } default { 'Red' } }
+    Write-Host "At n = ${maxN}: est. $prefix$(Format-LcDuration $est) -> $verdict" -ForegroundColor $color
+    $al = $b.Alloc
+    if ($al) {
+        if ($al.count -eq 0) { Write-Host "Allocations at n=$($al.n): none" }
+        else {
+            $word = if ($al.count -eq 1) { 'alloc' } else { 'allocs' }
+            Write-Host "Allocations at n=$($al.n): $($al.count) $word, $(Format-LcBytes $al.bytes) total, peak $(Format-LcBytes $al.peak)"
+        }
+    }
+    foreach ($a in $spec.Assumed) { Write-Host $a -ForegroundColor DarkGray }
+
+    $data = [ordered]@{
+        complexity = $cx
+        points     = @($pts | ForEach-Object { [ordered]@{ n = $_.n; ms = $_.ms } })
+        tle_risk   = $verdict
+    }
+    if ($al) { $data.alloc = [ordered]@{ count = $al.count; bytes = $al.bytes; peak = $al.peak } }
+    Add-LcEvent 'analyze_run' $data
+    [void](Save-LcSnapshot -Root $JourneyRoot -Slug $slug -SrcPath $src -SrcHash $srcHash)
+    Update-LcJourney
+    Exit-Lc 0
+}
+
 $cases = @()
 $anyOrder = $false
 if (Test-Path -LiteralPath $testFile) {
@@ -199,23 +329,7 @@ $jRun = @{ CompileOk = $false; CompileMs = 0; Cases = New-Object Collections.Arr
 $build = Build-LcExe -SrcPath $src -HarnessText $harnessText -UserText $userText -Flavor test
 $jRun.CompileOk = [bool]$build.Ok
 $jRun.CompileMs = $build.Ms
-if (-not $build.Ok) {
-    $t = $null
-    if ($build.Stage -eq 'harness') {
-        # The harness only sees the signature's types: a type lc.h can't read, or one only the solution defines.
-        # An undeclared type comes first: g++ then goes on with int in its place.
-        if ($build.Errors -match "error: '(\w+)' (was not declared|does not name a type|has not been declared)") { $t = $Matches[1] }
-        elseif ($build.Errors -match "always_false<(.+?) ?>' evaluates") { $t = $Matches[1] }
-        elseif ($build.Errors -match '\[with T = ([^;\]]+)') { $t = $Matches[1] }
-        elseif ($build.Errors -match 'lc: unsupported parameter type') { $t = '?' }
-    }
-    if ($t) {
-        Write-Host "This problem uses a parameter type the harness doesn't support yet: $t" -ForegroundColor Red
-    } else {
-        Write-Host $build.Errors
-    }
-    Exit-Lc 1
-}
+if (-not $build.Ok) { Write-LcBuildFailure $build; Exit-Lc 1 }
 
 # ---- run ----
 $buildDir = Split-Path -Parent $build.Exe

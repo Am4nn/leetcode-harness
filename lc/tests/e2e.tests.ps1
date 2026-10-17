@@ -31,12 +31,12 @@
     if (Test-Path -LiteralPath $userGch) { $userGchTime = (Get-Item -LiteralPath $userGch).LastWriteTimeUtc }
 
     # -Wait drops -NoWait (closing prompts read stdin); -Commit drops -NoCommit.
-    function Invoke-Lc([string]$File, [string[]]$Extra = @(), [string]$Stdin = '', [switch]$Wait, [switch]$Commit) {
+    function Invoke-Lc([string]$File, [string[]]$Extra = @(), [string]$Stdin = '', [switch]$Wait, [switch]$Commit, [string]$Mode = 'test') {
         $flags = @('-NoOpen', '-Offline')
         if (-not $Wait) { $flags += '-NoWait' }
         if (-not $Commit) { $flags += '-NoCommit' }
         $sw = [Diagnostics.Stopwatch]::StartNew()
-        $out = $Stdin | powershell -NoProfile -ExecutionPolicy Bypass -File $lcPs1 -Mode test @flags -JourneyRoot $journey @Extra $File 2>&1 | Out-String
+        $out = $Stdin | powershell -NoProfile -ExecutionPolicy Bypass -File $lcPs1 -Mode $Mode @flags -JourneyRoot $journey @Extra $File 2>&1 | Out-String
         $code = $LASTEXITCODE
         $sw.Stop()
         return @{ Out = $out; Code = $code; Ms = $sw.ElapsedMilliseconds }
@@ -324,6 +324,56 @@
         Assert-Equal (($mine | ForEach-Object { $_.event }) -join ',') 'test_run,note' 'e2e: mismatch events'
         Assert-Equal $mine[1].text 'renamed it'
         Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '2' 'e2e: mismatch run committed'
+
+        # e2e: analyze (Alt+F8). R6: the O(n^2) variant's own test file allows n up to 10^5.
+        $evBefore = @(Read-LcEvents $journey | Where-Object { $_.event -eq 'analyze_run' }).Count
+        $r = Invoke-Lc (Join-Path $tmp 'variants\two-sum.cpp') -Mode analyze
+        Assert-Equal $r.Code 0 "e2e: analyze variant exit code`n$($r.Out)"
+        Assert-Match $r.Out 'looks O\(n\^2\)'
+        Assert-Match $r.Out '(?m)^At n = 100000: est\. .* -> likely TLE\s*$'
+        $r = Invoke-Lc $twoSum -Mode analyze
+        Assert-Equal $r.Code 0 "e2e: analyze two-sum exit code`n$($r.Out)"
+        $outLines = @($r.Out.TrimEnd() -split '\r?\n')
+        Assert-Equal $outLines.Count 4 "e2e: analyze output lines`n$($r.Out)"
+        Assert-Match $outLines[0] '^Complexity: looks O\(n( log n)?\) \(random inputs; worst case may differ\)$'
+        Assert-Match $outLines[1] '^  n=\d+ [0-9.]+ ms( \| n=\d+ [0-9.]+ m?s)+$'
+        Assert-Match $outLines[2] '^At n = 10000: est\. [0-9.]+ ms -> ok$'
+        Assert-Match $outLines[3] '^Allocations at n=10000: \d+ allocs, [0-9.]+ [KM]?B total, peak [0-9.]+ [KM]?B$'
+        $r = Invoke-Lc (Join-Path $tmp 'climbing-stairs.cpp') -Mode analyze
+        Assert-Match $r.Out 'looks O\(2\^n\)'
+        Assert-Match $r.Out '(?m)^Allocations at n=45: none\s*$'
+        $r = Invoke-Lc (Join-Path $tmp 'lru-cache.cpp') -Mode analyze
+        Assert-Match $r.Out '(?m)^Per call: looks O\(1\) \(random inputs; worst case may differ\)'
+        Assert-Match $r.Out '(?m)^At n = 200000: est\. '
+        $an = @(Read-LcEvents $journey | Where-Object { $_.event -eq 'analyze_run' })
+        Assert-Equal ($an.Count - $evBefore) 4 'e2e: analyze_run events'
+        $a = $an[-1]
+        Assert-True ($a.slug -eq 'lru-cache' -and $a.complexity -eq 'O(1) per call' -and $a.tle_risk -eq 'ok') "e2e: lru analyze_run $($a | ConvertTo-Json -Compress)"
+        Assert-True (@($a.points).Count -ge 3 -and $null -ne @($a.points)[0].n -and $null -ne @($a.points)[0].ms) "e2e: analyze_run points $($a | ConvertTo-Json -Compress)"
+        Assert-True ($a.alloc.count -gt 0 -and $a.alloc.bytes -gt 0 -and $null -ne $a.alloc.peak) "e2e: analyze_run alloc $($a | ConvertTo-Json -Compress)"
+        # journey.md's Complexity comes from the latest analyze_run (the hash-map two-sum ran after the variant)
+        Assert-Match ([IO.File]::ReadAllText((Join-Path $journey 'journey.md'))) '\[Two Sum\]\(https://leetcode\.com/problems/two-sum/\) \| Easy \| Array, Hash Table \| O\(n( log n)?\) \|'
+        Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '2' 'e2e: analyze committed'
+
+        # e2e: analyze crash - the line, then the exact random input (gen --n N --seed S); missing constraints are noted
+        $an = Join-Path $tmp 'analyze'
+        New-Item -ItemType Directory -Force $an | Out-Null
+        [IO.File]::WriteAllText((Join-Path $an 'big-crash.cpp'), ("class Solution {`npublic:`n    int first(vector<int>& nums) {`n" +
+            "        if (nums.size() > 1000) { int* volatile p = nullptr; *p = 1; }`n        return nums[0];`n    }`n};`n"), $utf8)
+        $r = Invoke-Lc (Join-Path $an 'big-crash.cpp') -Mode analyze
+        Assert-Equal $r.Code 1 "e2e: analyze crash exit code`n$($r.Out)"
+        $outLines = @($r.Out.TrimEnd() -split '\r?\n')
+        Assert-Equal $outLines[0] 'Your solution crashed on a random input of size 1562 (random inputs only follow ranges, sorted and distinct, so they may break other promises).'
+        Assert-True ($outLines[1] -match '^Input: nums = \[(-?\d+,){1561}-?\d+\]$') "e2e: crash input`n$($outLines[1].Substring(0, [Math]::Min(200, $outLines[1].Length)))"
+        Assert-Equal $outLines[2] '(assumed: no constraint found for nums)'
+
+        # e2e: R5 backstop - a run still going after the timeout is killed and reported as a cap
+        [IO.File]::WriteAllText((Join-Path $an 'hang.cpp'), ("class Solution {`npublic:`n    int spin(vector<int>& nums) {`n" +
+            "        volatile int x = 0;`n        if (nums.size() > 1000) while (true) x++;`n        for (int v : nums) x += v;`n        return x;`n    }`n};`n"), $utf8)
+        $r = Invoke-Lc (Join-Path $an 'hang.cpp') @('-TimeoutMs', '3000') -Mode analyze
+        Assert-Equal $r.Code 0 "e2e: analyze backstop exit code`n$($r.Out)"
+        Assert-Match $r.Out '(?m)^  stopped at n=1562: still running after 3 s\s*$'
+        Assert-True ($r.Ms -lt 20000) "e2e: analyze backstop took $($r.Ms) ms"
 
         # e2e: the real dsa/journey was never written
         if ($null -eq $realEventsTime) { Assert-True (-not (Test-Path -LiteralPath $realEvents)) 'e2e: wrote the real journey' }
