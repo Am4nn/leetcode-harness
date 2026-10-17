@@ -1,0 +1,27 @@
+{
+    "questionFrontendId":  "104",
+    "title":  "Maximum Depth of Binary Tree",
+    "titleSlug":  "maximum-depth-of-binary-tree",
+    "difficulty":  "Easy",
+    "isPaidOnly":  false,
+    "topicTags":  [
+                      {
+                          "name":  "Tree"
+                      },
+                      {
+                          "name":  "Depth-First Search"
+                      },
+                      {
+                          "name":  "Breadth-First Search"
+                      },
+                      {
+                          "name":  "Binary Tree"
+                      }
+                  ],
+    "metaData":  "{\r\n  \"name\": \"maxDepth\",\r\n  \"params\": [\r\n    {\r\n      \"name\": \"root\",\r\n      \"type\": \"TreeNode\"\r\n    }\r\n  ],\r\n  \"return\": {\r\n    \"type\": \"integer\"\r\n  }\r\n}",
+    "exampleTestcaseList":  [
+                                "[3,9,20,null,null,15,7]",
+                                "[1,null,2]"
+                            ],
+    "content":  "\u003cp\u003eGiven the \u003ccode\u003eroot\u003c/code\u003e of a binary tree, return \u003cem\u003eits maximum depth\u003c/em\u003e.\u003c/p\u003e\n\n\u003cp\u003eA binary tree\u0026#39;s \u003cstrong\u003emaximum depth\u003c/strong\u003e\u0026nbsp;is the number of nodes along the longest path from the root node down to the farthest leaf node.\u003c/p\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 1:\u003c/strong\u003e\u003c/p\u003e\n\u003cimg alt=\"\" src=\"https://assets.leetcode.com/uploads/2020/11/26/tmp-tree.jpg\" style=\"width: 400px; height: 277px;\" /\u003e\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e root = [3,9,20,null,null,15,7]\n\u003cstrong\u003eOutput:\u003c/strong\u003e 3\n\u003c/pre\u003e\n\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 2:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e root = [1,null,2]\n\u003cstrong\u003eOutput:\u003c/strong\u003e 2\n\u003c/pre\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong\u003eConstraints:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cul\u003e\n\t\u003cli\u003eThe number of nodes in the tree is in the range \u003ccode\u003e[0, 10\u003csup\u003e4\u003c/sup\u003e]\u003c/code\u003e.\u003c/li\u003e\n\t\u003cli\u003e\u003ccode\u003e-100 \u0026lt;= Node.val \u0026lt;= 100\u003c/code\u003e\u003c/li\u003e\n\u003c/ul\u003e\n"
+}
