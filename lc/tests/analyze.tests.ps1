@@ -109,4 +109,45 @@
     # R36: a word list's size is its number of strings, as bench reports it.
     $wi = Get-LcInfoFromMeta '{"name":"f","params":[{"name":"words","type":"string[]"}],"return":{"type":"integer"}}'
     Assert-Equal (ConvertTo-LcSpec -Constraints @('1 <= words.length <= 5000') -Info $wi).MaxN 5000
+
+    # Call counts: short names and the printed line.
+    Assert-Equal (Get-LcShortName 'Solution::climbStairs(int)') 'climbStairs'
+    Assert-Equal (Get-LcShortName 'Solution::dfs(TreeNode*, std::vector<int, std::allocator<int> >&) const') 'dfs'
+    Assert-Equal (Get-LcShortName 'gcd(int, int)') 'gcd'
+    Assert-Equal (Get-LcShortName 'Solution::f(int)::{lambda(int)#1}::operator()(int) const') 'lambda in f'
+    # Template instances start with their return type; a generic lambda's operator() has template arguments.
+    Assert-Equal (Get-LcShortName 'int Solution::f(std::vector<int, std::allocator<int> >&)::{lambda(auto:1&&, int)#1}::operator()<{lambda(auto:1&&, int)#1}&>({lambda(auto:1&&, int)#1}&, int) const') 'lambda in f'
+    Assert-Equal (Get-LcShortName 'std::vector<int, std::allocator<int> > Solution::go<int>(int, int)') 'go<int>'
+    Assert-Equal (Get-LcShortName 'long long pw<long long>(long long)') 'pw<long long>'
+    Assert-Equal (Format-LcCallsLine -N 30 -Profile @(@{ Name = 'Solution::climbStairs(int)'; Calls = 1664079; Depth = 30 })) 'Calls (n=30): climbStairs: 1,664,079 calls, max depth 30'
+    $many = @(@{ Name = 'Solution::a(int)'; Calls = 9; Depth = 3 }, @{ Name = 'Solution::b()'; Calls = 1; Depth = 1 },
+        @{ Name = 'Solution::c(int)'; Calls = 5; Depth = 1 }, @{ Name = 'Solution::d(int)'; Calls = 4; Depth = 2 })
+    Assert-Equal (Format-LcCallsLine -N 8 -Profile $many) 'Calls (n=8): a: 9 calls, max depth 3; c: 5 calls, max depth 1; d: 4 calls, max depth 2'
+    Assert-Equal (Format-LcCallsLine -N 8 -Profile @(@{ Name = 'Solution::twoSum(int)'; Calls = 1; Depth = 1 })) 'Calls (n=8): twoSum: 1 call, max depth 1'
+
+    # Call counts and recursion depth from the profile build: n=20 is 2*fib(21)-1 calls, depth 20 (R7 fixture).
+    # Only the user's own functions are counted (no lc_user_* hooks, no STL).
+    . (Join-Path $repo '.zed\common.ps1')
+    . (Join-Path $repo '.zed\lc\build.ps1')
+    $oldBuildRoot = $env:LC_BUILD_ROOT
+    $env:LC_BUILD_ROOT = Join-Path $env:TEMP 'lc-analyze-build'
+    try {
+        $src = Join-Path $repo 'lc\selftest\climbing-stairs.cpp'
+        $ci = Get-LcInfoFromMeta '{"name":"climbStairs","params":[{"name":"n","type":"integer"}],"return":{"type":"integer"}}'
+        $build = Build-LcExe -SrcPath $src -HarnessText (New-LcHarnessText -Info $ci) -UserText (New-LcUserText -SrcPath $src -Info $ci) -Flavor profile
+        Assert-True $build.Ok "profile build`n$($build.Errors)"
+        $dir = Split-Path -Parent $build.Exe
+        $specPath = Join-Path $dir 'profile-spec.txt'
+        $resPath = Join-Path $dir 'profile-results.txt'
+        [IO.File]::WriteAllText($specPath, "size n`nparam n val 1 45`n", (New-Object Text.UTF8Encoding $false))
+        Remove-Item -LiteralPath $resPath -ErrorAction SilentlyContinue
+        & $build.Exe profile $specPath $resPath --n 20 --seed 1
+        Assert-Equal $LASTEXITCODE 0 'profile exit code'
+        $p = @(Resolve-LcProfile -Exe $build.Exe -Lines ([IO.File]::ReadAllLines($resPath)))
+        Assert-Equal (@($p | ForEach-Object { $_.Name }) -join ',') 'Solution::climbStairs(int)' 'profiled functions'
+        Assert-Equal $p[0].Calls 21891
+        Assert-Equal $p[0].Depth 20
+    } finally {
+        $env:LC_BUILD_ROOT = $oldBuildRoot
+    }
 }

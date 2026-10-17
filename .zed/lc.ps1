@@ -1,6 +1,7 @@
 # LeetCode harness for the file open in Zed (leetcode-solves/<slug>.cpp).
 #   -Mode test     run the cases in tests/<slug>.txt; the first run fetches the problem and writes that file
-#   -Mode analyze  complexity estimate, TLE verdict and allocations from timed random inputs (bench)
+#   -Mode analyze  complexity estimate, TLE verdict and allocations from timed random inputs (bench), then
+#                  call counts and recursion depth (profile)
 [CmdletBinding(PositionalBinding = $false)]
 param(
     [ValidateSet('test', 'analyze')][string]$Mode = 'test',
@@ -202,13 +203,15 @@ if ($fromSource) {
     if ($problem) { Write-Host $problem -ForegroundColor Red; Exit-Lc 1 }
 }
 
-# ---- analyze: bench on seeded random inputs, complexity fit, TLE verdict, allocations ----
+# ---- analyze: bench on seeded random inputs, complexity fit, TLE verdict, allocations, call counts ----
 if ($Mode -eq 'analyze') {
     . (Join-Path $PSScriptRoot 'lc\analyze.ps1')
     $constraints = @()
     if (Test-Path -LiteralPath $testFile) { $constraints = Get-LcConstraints ([IO.File]::ReadAllText($testFile, [Text.Encoding]::UTF8)) }
     $spec = ConvertTo-LcSpec -Constraints $constraints -Info $info
-    $build = Build-LcExe -SrcPath $src -HarnessText (New-LcHarnessText -Info $info) -UserText (New-LcUserText -SrcPath $src -Info $info) -Flavor bench -Name bench
+    $harnessText = New-LcHarnessText -Info $info
+    $userText = New-LcUserText -SrcPath $src -Info $info
+    $build = Build-LcExe -SrcPath $src -HarnessText $harnessText -UserText $userText -Flavor bench -Name bench
     if (-not $build.Ok) { Write-LcBuildFailure $build; Exit-Lc 1 }
     $buildDir = Split-Path -Parent $build.Exe
     $specPath = Join-Path $buildDir 'bench-spec.txt'
@@ -300,6 +303,23 @@ if ($Mode -eq 'analyze') {
             Write-Host "Allocations at n=$($al.n): $($al.count) $word, $(Format-LcBytes $al.bytes) total, peak $(Format-LcBytes $al.peak)"
         }
     }
+    # Call counts and recursion depth: one input (same seed) at the largest size bench timed under 200 ms,
+    # on the profile build (only the user TU is instrumented). Silent when it can't be had.
+    $prof = @()
+    $profN = $null
+    foreach ($p in $pts) { if (-not $p.capped -and $p.ms -lt 200) { $profN = $p.n } }
+    if ($profN) {
+        $pb = Build-LcExe -SrcPath $src -HarnessText $harnessText -UserText $userText -Flavor profile
+        $profPath = Join-Path $buildDir 'profile-results.txt'
+        Remove-Item -LiteralPath $profPath -ErrorAction SilentlyContinue
+        if ($pb.Ok) {
+            $pm = Start-Measured -Exe $pb.Exe -ArgumentList @('profile', $specPath, $profPath, '--n', "$profN", '--seed', "$seed") -TimeoutMs $limitMs -NoStdout
+            if ($pm.Code -eq 0 -and (Test-Path -LiteralPath $profPath)) {
+                $prof = @(Resolve-LcProfile -Exe $pb.Exe -Lines ([IO.File]::ReadAllLines($profPath)))
+            }
+        }
+    }
+    if ($prof.Count) { Write-Host (Format-LcCallsLine -N $profN -Profile $prof) }
     foreach ($a in $spec.Assumed) { Write-Host $a -ForegroundColor DarkGray }
 
     $data = [ordered]@{
@@ -313,6 +333,16 @@ if ($Mode -eq 'analyze') {
         alloc      = $null  # no size finished
     }
     if ($al) { $data.alloc = [ordered]@{ count = $al.count; bytes = $al.bytes; peak = $al.peak } }
+    $data.calls = $null  # no profile
+    if ($prof.Count) {
+        # Short names; a second function with the same short name (an overload) keeps its full name.
+        $data.calls = [ordered]@{}
+        foreach ($p in $prof) {
+            $k = Get-LcShortName $p.Name
+            if ($data.calls.Contains($k)) { $k = $p.Name }
+            $data.calls[$k] = [ordered]@{ count = $p.Calls; depth = $p.Depth }
+        }
+    }
     Add-LcEvent 'analyze_run' $data
     [void](Save-LcSnapshot -Root $JourneyRoot -Slug $slug -SrcPath $src -SrcHash $srcHash)
     Update-LcJourney

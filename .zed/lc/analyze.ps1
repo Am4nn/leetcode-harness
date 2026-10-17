@@ -263,3 +263,79 @@ function Format-LcBytes([long]$Bytes) {
     if ($Bytes -ge 1024) { return ($Bytes / 1024.0).ToString('0.0', $inv) + ' KB' }
     return "$Bytes B"
 }
+
+# The function's own name from an nm -C name: no class, namespace or parameters
+# ("Solution::climbStairs(int)" -> "climbStairs"); a lambda is "lambda in <enclosing function>".
+function Get-LcShortName([string]$Name) {
+    $s = ($Name -replace '\s*\[clone [^\]]*\]', '').Trim()
+    while ($s -match '^(.*?)\s*(const|volatile|noexcept|&&|&)$') { $s = $Matches[1] }
+    if ($s.EndsWith(')')) {
+        $d = 0
+        for ($i = $s.Length - 1; $i -ge 0; $i--) {
+            if ($s[$i] -eq ')') { $d++ } elseif ($s[$i] -eq '(') { $d--; if ($d -eq 0) { $s = $s.Substring(0, $i); break } }
+        }
+    }
+    # Split on top-level "::" (not inside (), <> or {}).
+    $parts = @(); $d = 0; $start = 0
+    for ($i = 0; $i -lt $s.Length; $i++) {
+        $ch = $s[$i]
+        if ('(<{'.IndexOf($ch) -ge 0) { $d++ }
+        elseif (')>}'.IndexOf($ch) -ge 0) { $d-- }
+        elseif ($d -eq 0 -and $ch -eq ':' -and $i + 1 -lt $s.Length -and $s[$i + 1] -eq ':') {
+            $parts += $s.Substring($start, $i - $start); $start = $i + 2; $i++
+        }
+    }
+    $parts += $s.Substring($start)
+    $k = $parts.Count - 1
+    # A generic lambda's call operator is a template: operator()<...>.
+    if ($parts[$k].StartsWith('operator()') -and $k -ge 2 -and $parts[$k - 1].StartsWith('{lambda')) {
+        return 'lambda in ' + (Get-LcShortName ($parts[0..($k - 2)] -join '::'))
+    }
+    # A template instance's name starts with its return type ("int go<int>"): keep what follows the last
+    # top-level space.
+    $last = $parts[$k]; $d = 0; $cut = -1
+    for ($i = 0; $i -lt $last.Length; $i++) {
+        $ch = $last[$i]
+        if ('(<{'.IndexOf($ch) -ge 0) { $d++ } elseif (')>}'.IndexOf($ch) -ge 0) { $d-- } elseif ($d -eq 0 -and $ch -eq ' ') { $cut = $i }
+    }
+    return $last.Substring($cut + 1)
+}
+
+# The analyze line for the profiled functions (Resolve-LcProfile order): at most 3, and functions called
+# once (the entry point, a constructor) only when nothing was called more often.
+function Format-LcCallsLine([long]$N, $Profile) {
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    $list = @($Profile)
+    if (@($list | Where-Object { $_.Calls -gt 1 }).Count) { $list = @($list | Where-Object { $_.Calls -gt 1 }) }
+    $items = @($list | Select-Object -First 3 | ForEach-Object {
+        $word = if ($_.Calls -eq 1) { 'call' } else { 'calls' }
+        "$(Get-LcShortName $_.Name): $(([long]$_.Calls).ToString('N0', $inv)) $word, max depth $($_.Depth)"
+    })
+    return "Calls (n=$N): " + ($items -join '; ')
+}
+
+# Profile results lines ({"fn":"0x<hex>","calls":C,"depth":D}) -> @(@{ Name; Calls; Depth }), names from
+# nm's symbols for the exe (linked with --disable-dynamicbase, so they match the runtime addresses).
+# Most calls first, top 5. An address nm doesn't know keeps its hex form.
+function Resolve-LcProfile([string]$Exe, [string[]]$Lines) {
+    $want = @{}
+    foreach ($line in @($Lines)) {
+        if (-not $line -or $line -notmatch '"fn"') { continue }
+        try { $o = $line | ConvertFrom-Json } catch { continue }
+        $key = ([Convert]::ToUInt64(([string]$o.fn).Substring(2), 16)).ToString('x16')
+        $want[$key] = @{ Name = [string]$o.fn; Calls = [long]$o.calls; Depth = [long]$o.depth }
+    }
+    if ($want.Count) {
+        $named = @{}
+        foreach ($l in @(& 'C:\msys64\ucrt64\bin\nm.exe' -C --defined-only $Exe 2>$null)) {
+            if ($l.Length -lt 20) { continue }
+            $key = $l.Substring(0, 16).ToLowerInvariant()
+            # Skip section symbols (".text$_ZN8Solution...") at the same address.
+            if ($want.ContainsKey($key) -and -not $named.ContainsKey($key) -and $l[19] -ne '.') {
+                $named[$key] = $true
+                $want[$key].Name = $l.Substring(19)
+            }
+        }
+    }
+    return @($want.Values | Sort-Object @{ Expression = { $_.Calls }; Descending = $true }, @{ Expression = { $_.Name } } | Select-Object -First 5)
+}

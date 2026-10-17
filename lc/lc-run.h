@@ -1,6 +1,6 @@
 // Runs a LeetCode solution against a cases file and writes one JSON line per event to a results file.
-// The user's own stdout is never touched, so it can't mix with results. Also has the bench and gen modes.
-// Relies on lc-io.h, lc-alloc.h and lc-gen.h.
+// The user's own stdout is never touched, so it can't mix with results. Also has the bench, gen and profile
+// modes. Relies on lc-io.h, lc-alloc.h, lc-gen.h and lc-prof.h.
 #ifndef LC_RUN_H
 #define LC_RUN_H
 
@@ -119,16 +119,13 @@ struct Cli {
 inline int parse_cli(int argc, char** argv, Cli& cli) {
     static const std::string test_use = "test <cases> <results> [--any-order]",
                              bench_use = "bench <spec> <results> --seed S --max-ms M",
+                             profile_use = "profile <spec> <results> --n N --seed S",
                              gen_use = "gen <spec> <out-cases> --count C (--max-n N | --n N) --seed S";
     auto usage = [](const std::string& text) {
         std::cerr << "usage: " << text << '\n';
         return 2;
     };
     cli.mode = argc > 1 ? argv[1] : "";
-    if (cli.mode == "profile") {
-        std::cerr << "mode not supported yet\n";
-        return 2;
-    }
     if (cli.mode == "test") {
         if (!(argc == 4 || (argc == 5 && std::string(argv[4]) == "--any-order"))) return usage(test_use);
         cli.in = argv[2];
@@ -136,9 +133,9 @@ inline int parse_cli(int argc, char** argv, Cli& cli) {
         cli.any_order = argc == 5;
         return 0;
     }
-    if (cli.mode != "bench" && cli.mode != "gen") return usage(test_use + " | " + bench_use + " | " + gen_use);
-    bool bench = cli.mode == "bench";
-    const std::string& use = bench ? bench_use : gen_use;
+    bool bench = cli.mode == "bench", gen = cli.mode == "gen", profile = cli.mode == "profile";
+    if (!bench && !gen && !profile) return usage(test_use + " | " + bench_use + " | " + profile_use + " | " + gen_use);
+    const std::string& use = bench ? bench_use : gen ? gen_use : profile_use;
     if (argc < 4 || argc % 2) return usage(use);
     cli.in = argv[2];
     cli.out = argv[3];
@@ -152,13 +149,14 @@ inline int parse_cli(int argc, char** argv, Cli& cli) {
         bool ok = false;
         if (k == "--seed") ok = number(cli.seed);
         else if (bench && k == "--max-ms") ok = number(cli.max_ms) && cli.max_ms > 0;
-        else if (!bench && k == "--count") ok = number(cli.count) && cli.count >= 0;
-        else if (!bench && k == "--max-n") ok = number(cli.max_n) && cli.max_n >= 1;
-        else if (!bench && k == "--n") ok = number(cli.n) && cli.n >= 1;
+        else if (gen && k == "--count") ok = number(cli.count) && cli.count >= 0;
+        else if (gen && k == "--max-n") ok = number(cli.max_n) && cli.max_n >= 1;
+        else if ((gen || profile) && k == "--n") ok = number(cli.n) && cli.n >= 1;
         if (!ok || !seen.insert(k).second) return usage(use);
     }
-    bool complete = seen.count("--seed") && (bench ? seen.count("--max-ms") > 0
-                                                   : seen.count("--count") && (seen.count("--max-n") || seen.count("--n")));
+    bool complete = seen.count("--seed") && (bench     ? seen.count("--max-ms") > 0
+                                             : profile ? seen.count("--n") > 0
+                                                       : seen.count("--count") && (seen.count("--max-n") || seen.count("--n")));
     return complete ? 0 : usage(use);
 }
 
@@ -507,6 +505,68 @@ template <class... A> int gen_function(const Cli& cli, const std::vector<std::st
     return 0;
 }
 
+// Profile mode (analyze's call counts, run on a profile build): `prepare()` builds the input and returns
+// the call; the call runs once and every instrumented (user) function it entered gets one line,
+// {"fn":"0x<hex>","calls":C,"depth":D}, depth being the most simultaneous calls of that same function.
+template <class Prepare> int profile_run(const Cli& cli, Prepare prepare) {
+#ifdef LC_PROFILE
+    constexpr bool profile_build = true;
+#else
+    constexpr bool profile_build = false;
+#endif
+    if constexpr (!profile_build) {
+        (void)prepare;
+        std::cerr << "profile mode needs a profile build\n";
+        return 2;
+    } else {
+        std::ofstream out(cli.out, std::ios::binary);
+        if (!out) {
+            std::cerr << "can't write results file " << cli.out << '\n';
+            return 2;
+        }
+        try {
+            auto run = prepare();
+            reset_prof();
+            run();
+        } catch (const std::exception& e) {
+            out << "{\"status\":\"error\",\"error\":\"" << json_escape(std::string("exception: ") + e.what()) << "\"}\n";
+        } catch (...) {
+            out << "{\"status\":\"error\",\"error\":\"exception: unknown\"}\n";
+        }
+        for (const ProfEntry& e : prof_entries()) {
+            char b[32];
+            std::snprintf(b, sizeof b, "0x%llx", (unsigned long long)(uintptr_t)e.fn);
+            out << "{\"fn\":\"" << b << "\",\"calls\":" << e.calls << ",\"depth\":" << e.max_depth << "}\n";
+        }
+        return 0;
+    }
+}
+
+// One generated input at exactly --n and --seed, as bench and gen make it.
+template <class S, class R, class M, class... A>
+int profile_function(const Cli& cli, M method, const std::vector<std::string>& names) {
+    Spec spec;
+    if (!load_spec(cli, spec)) return 2;
+    return profile_run(cli, [&] {
+        std::mt19937_64 rng(cli.seed);
+        auto args = generate_args<std::remove_cvref_t<A>...>(spec, names, cli.n, rng);
+        return [method, args = std::move(args)]() mutable {
+            S sol;
+            std::apply([&](auto&... a) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+                if constexpr (std::is_void_v<R>) {
+                    (sol.*method)(a...);
+                } else {
+                    auto&& got = (sol.*method)(a...);
+                    keep(got);
+                }
+#pragma GCC diagnostic pop
+            }, args);
+        };
+    });
+}
+
 template <class S, class R, class M, class... A>
 int run_function_impl(int argc, char** argv, M method, const std::vector<std::string>& names, int out_param) {
     constexpr size_t N = sizeof...(A);
@@ -514,6 +574,7 @@ int run_function_impl(int argc, char** argv, M method, const std::vector<std::st
     if (int code = parse_cli(argc, argv, cli)) return code;
     if (cli.mode == "bench") return bench_function<S, R, M, A...>(cli, method, names);
     if (cli.mode == "gen") return gen_function<A...>(cli, names);
+    if (cli.mode == "profile") return profile_function<S, R, M, A...>(cli, method, names);
 
     if constexpr (std::is_void_v<R>) {
         constexpr bool mut[] = {false, (std::is_lvalue_reference_v<A> && !std::is_const_v<std::remove_reference_t<A>>)...};
@@ -808,6 +869,21 @@ int gen_design(const Cli& cli, const std::vector<std::string>& ctor_names, const
     return 0;
 }
 
+template <class C, class... CtorA>
+int profile_design(const Cli& cli, const std::vector<std::string>& ctor_names, const MethodList<C>& ms) {
+    Spec spec;
+    if (!load_spec(cli, spec)) return 2;
+    return profile_run(cli, [&] {
+        std::mt19937_64 rng(cli.seed);
+        std::vector<std::function<void(C&)>> calls;
+        auto ct = random_sequence<C, CtorA...>(spec, ctor_names, ms, cli.n, rng, calls, nullptr, nullptr);
+        return [ct = std::move(ct), calls = std::move(calls)]() mutable {
+            std::unique_ptr<C> obj = std::apply([](auto&... a) { return std::make_unique<C>(a...); }, ct);
+            for (auto& f : calls) f(*obj);
+        };
+    });
+}
+
 }  // namespace detail
 
 template <class C, class R, class... A> Method<C> method(R (C::*m)(A...), std::vector<std::string> names) {
@@ -822,11 +898,12 @@ template <class C, class... CtorA>
 int run_design(int argc, char** argv, std::vector<std::string> ctor_names, std::map<std::string, Method<C>> methods) {
     detail::Cli cli;
     if (int code = detail::parse_cli(argc, argv, cli)) return code;
-    if (cli.mode == "bench" || cli.mode == "gen") {
+    if (cli.mode == "bench" || cli.mode == "gen" || cli.mode == "profile") {
         detail::MethodList<C> ms;
         for (const auto& [name, mt] : methods) ms.push_back({name, &mt});
-        return cli.mode == "bench" ? detail::bench_design<C, CtorA...>(cli, ctor_names, ms)
-                                   : detail::gen_design<C, CtorA...>(cli, ctor_names, ms);
+        if (cli.mode == "bench") return detail::bench_design<C, CtorA...>(cli, ctor_names, ms);
+        if (cli.mode == "gen") return detail::gen_design<C, CtorA...>(cli, ctor_names, ms);
+        return detail::profile_design<C, CtorA...>(cli, ctor_names, ms);
     }
     std::vector<Case> cases;
     try {

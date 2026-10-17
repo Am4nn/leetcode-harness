@@ -440,7 +440,8 @@ int main(int, char** argv) {
         CHECK_EQ(bad({"x", "gen", "a", "b", "--count", "1", "--max-n", "x", "--seed", "1"}), 2);
         CHECK_EQ(bad({"x", "gen", "a", "b", "--count", "1", "--seed", "1"}), 2);
         CHECK_EQ(bad({"x", "gen", "a", "b", "--count", "1", "--n", "0", "--seed", "1"}), 2);
-        CHECK_EQ(bad({"x", "profile", "a", "b", "--n", "1", "--seed", "1"}), 2);
+        CHECK_EQ(bad({"x", "profile", "a", "b", "--seed", "1"}), 2);
+        CHECK_EQ(bad({"x", "profile", "a", "b", "--n", "1", "--seed", "1", "--max-ms", "5"}), 2);
         CHECK_EQ(bad({"x", "bench", (tmp_dir / "missing.spec").string(), "b", "--seed", "1", "--max-ms", "5"}), 2);
     }
 

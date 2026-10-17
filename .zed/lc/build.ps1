@@ -24,10 +24,13 @@ function Get-LcFlavorFlags([string]$Flavor) {
     throw "unknown build flavor: $Flavor"
 }
 
-# Extra compile flags for the user translation unit (and its PCH) only.
+# Extra compile flags for the user translation unit (and its PCH) only. Profile: only the user's own
+# functions call lc-prof.h's hooks; the STL and the prelude (TreeNode/ListNode) are excluded by file, the
+# generated lc_user_* hooks by name. (The solution may itself sit under a /lc/ or /build/ folder.)
 function Get-LcUserFlags([string]$Flavor) {
     if ($Flavor -eq 'profile') {
-        return @('-finstrument-functions', '-finstrument-functions-exclude-file-list=include/c++,/lc/,/build/')
+        return @('-finstrument-functions', '-finstrument-functions-exclude-file-list=include/,lc-prelude.h',
+                 '-finstrument-functions-exclude-function-list=lc_user_')
     }
     return @()
 }
