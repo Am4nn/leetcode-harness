@@ -3,3 +3,9 @@ CompileFlags:
     - --target=x86_64-w64-windows-gnu
     - --sysroot=C:/msys64/ucrt64
     - -std=c++23
+
+---
+If:
+  PathMatch: [leetcode-solves/.*, lc/selftest/.*]
+CompileFlags:
+  Add: [-include, C:/Aman/Coding-Bamzii/dsa/lc/lc-prelude.h]
