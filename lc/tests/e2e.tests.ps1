@@ -340,7 +340,10 @@
         Assert-Match $outLines[2] '^At n = 10000: est\. [0-9.]+ ms -> ok$'
         Assert-Match $outLines[3] '^Allocations at n=10000: \d+ allocs, [0-9.]+ [KM]?B total, peak [0-9.]+ [KM]?B$'
         Assert-Match $outLines[4] '^Calls \(n=\d+\): twoSum: 1 call, max depth 1$'
+        # Task 13: a correct brute force next to the naive recursion agrees on every random case
+        Copy-Item (Join-Path $tmp 'bugged\tests\climbing-stairs.brute.cpp') (Join-Path $tmp 'tests')
         $r = Invoke-Lc (Join-Path $tmp 'climbing-stairs.cpp') -Mode analyze
+        Assert-Match $r.Out '(?m)^Brute force: 200 random cases agree\s*$'
         Assert-Match $r.Out 'looks O\(2\^n\)'
         Assert-Match $r.Out '(?m)^Allocations at n=45: none\s*$'
         # Task 12: call counts and recursion depth (profile build) at the largest size timed under 200 ms
@@ -360,6 +363,13 @@
         # journey.md's Complexity comes from the latest analyze_run (the hash-map two-sum ran after the variant)
         Assert-Match ([IO.File]::ReadAllText((Join-Path $journey 'journey.md'))) '\[Two Sum\]\(https://leetcode\.com/problems/two-sum/\) \| Easy \| Array, Hash Table \| O\(n( log n)?\) \|'
         Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '2' 'e2e: analyze committed'
+
+        # e2e: Task 13 - the brute force finds the bugged memo version's first wrong case (n % 7 == 0)
+        $r = Invoke-Lc (Join-Path $tmp 'bugged\climbing-stairs.cpp') -Mode analyze
+        Assert-Equal $r.Code 0 "e2e: analyze bugged exit code`n$($r.Out)"
+        Assert-Match $r.Out '(?m)^Brute force: MISMATCH\r?\nInput: n = (7|14|21|28|35|42)\r?\nyours: \d+   brute: \d+\s*$'
+        $a = @(Read-LcEvents $journey | Where-Object { $_.event -eq 'analyze_run' })[-1]
+        Assert-True ($a.brute.cases -eq 200 -and $a.brute.mismatch_input -match '^Input: n = (7|14|21|28|35|42)$') "e2e: analyze_run brute $($a | ConvertTo-Json -Compress)"
 
         # e2e: analyze crash - the line, then the exact random input (gen --n N --seed S); missing constraints are noted
         $an = Join-Path $tmp 'analyze'
