@@ -8,6 +8,9 @@
     if (Test-Path -LiteralPath $tmp) { Remove-Item -Recurse -Force -LiteralPath $tmp }
     Copy-Item -Recurse (Join-Path $repo 'lc\selftest') $tmp
     $journey = Join-Path $tmp 'journey'
+    . (Join-Path $repo '.zed\common.ps1')
+    . (Join-Path $repo '.zed\lc\info.ps1')
+    . (Join-Path $repo '.zed\lc\build.ps1')
 
     function Invoke-Lc([string]$File, [string[]]$Extra = @(), [string]$Stdin = '') {
         $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -47,26 +50,65 @@
         }
 
         # e2e: rerun skips compile
-        $exe = Join-Path $repo 'build\lc\two-sum\test.exe'
+        $twoSumDir = Get-LcBuildDir $twoSum
+        Assert-Match $twoSumDir '\\build\\lc\\two-sum-[0-9a-f]{8}$'
+        $exe = Join-Path $twoSumDir 'test.exe'
         $mtime = (Get-Item -LiteralPath $exe).LastWriteTimeUtc
         $r = Invoke-Lc $twoSum
         Assert-Equal $r.Code 0 "e2e: two-sum rerun`n$($r.Out)"
         Assert-Equal (Get-Item -LiteralPath $exe).LastWriteTimeUtc $mtime 'e2e: rerun must not rebuild the exe'
         Assert-True ($r.Ms -lt $firstTwoSum.Ms) "e2e: rerun $($r.Ms) ms not faster than first run $($firstTwoSum.Ms) ms"
 
+        # e2e: editing the solution recompiles only the user TU
+        $mtimes = { @('test-harness.o', 'test-harness.stamp', 'test-user.o') | ForEach-Object { (Get-Item -LiteralPath (Join-Path $twoSumDir $_)).LastWriteTimeUtc } }
+        $before = & $mtimes
+        $harnessStamp = [IO.File]::ReadAllText((Join-Path $twoSumDir 'test-harness.stamp'))
+        [IO.File]::AppendAllText($twoSum, "// edited`n", $utf8)
+        $r = Invoke-Lc $twoSum
+        Assert-Equal $r.Code 0 "e2e: two-sum after edit`n$($r.Out)"
+        $after = & $mtimes
+        Assert-Equal $after[0] $before[0] 'e2e: an edit must not rebuild the harness object'
+        Assert-Equal $after[1] $before[1] 'e2e: an edit must not rewrite the harness stamp'
+        Assert-Equal ([IO.File]::ReadAllText((Join-Path $twoSumDir 'test-harness.stamp'))) $harnessStamp
+        Assert-True ($after[2] -gt $before[2]) 'e2e: an edit must rebuild the user object'
+
+        # e2e: touching lc/lc.h rebuilds the harness
+        (Get-Item -LiteralPath (Join-Path $repo 'lc\lc.h')).LastWriteTimeUtc = [DateTime]::UtcNow
+        $r = Invoke-Lc $twoSum
+        Assert-Equal $r.Code 0 "e2e: two-sum after touching lc.h`n$($r.Out)"
+        Assert-True ((& $mtimes)[0] -gt $after[0]) 'e2e: touching lc.h must rebuild the harness object'
+
+        # e2e: design gen names the real class; allocations in the user TU are counted
+        $lruExe = Join-Path (Get-LcBuildDir (Join-Path $tmp 'lru-cache.cpp')) 'test.exe'
+        $spec = Join-Path $tmp 'lru.spec.txt'
+        [IO.File]::WriteAllText($spec, "calls 2000`nparam capacity val 3000 3000`nparam key val 0 1000000`nparam value val 0 9`n", $utf8)
+        $genOut = Join-Path $tmp 'lru.gen.txt'
+        & $lruExe gen $spec $genOut --count 1 --max-n 4 --seed 1 | Out-Null
+        Assert-Match ([IO.File]::ReadAllText($genOut)) '(?m)^ops \["LRUCache",'
+        $benchOut = Join-Path $tmp 'lru.bench.txt'
+        & $lruExe bench $spec $benchOut --seed 1 --max-ms 200 | Out-Null
+        $last = @([IO.File]::ReadAllLines($benchOut))[-1]
+        Assert-True ($last -match '"alloc":\{"count":(\d+)' -and [int]$Matches[1] -ge 100) "e2e: bench alloc line $last"
+
         # Build-LcExe reports Skipped on an unchanged rebuild.
         & {
-            . (Join-Path $repo '.zed\common.ps1')
-            . (Join-Path $repo '.zed\lc\build.ps1')
             $scratch = Join-Path $tmp 'my-scratch.cpp'
-            $w = '#include "' + ($scratch -replace '\\', '/') + "`"`nint main(int argc, char** argv) { return lc::run_function(argc, argv, &Solution::add, {`"a`",`"b`"}, -1); }`n"
-            $b1 = Build-LcExe -Slug 'my-scratch' -SrcPath $scratch -WrapperText $w -Flavor test -Name 'unit'
+            $si = Get-LcInfoFromSource ([IO.File]::ReadAllText($scratch))
+            $h = New-LcHarnessText -Info $si
+            $u = New-LcUserText -SrcPath $scratch -Info $si
+            $b1 = Build-LcExe -SrcPath $scratch -HarnessText $h -UserText $u -Flavor test -Name 'unit'
             Assert-True $b1.Ok "Build-LcExe failed: $($b1.Errors)"
-            $b2 = Build-LcExe -Slug 'my-scratch' -SrcPath $scratch -WrapperText $w -Flavor test -Name 'unit'
+            $b2 = Build-LcExe -SrcPath $scratch -HarnessText $h -UserText $u -Flavor test -Name 'unit'
             Assert-True ($b2.Ok -and $b2.Skipped) 'second Build-LcExe must be Skipped'
             Assert-True (Test-Path -LiteralPath $b2.Exe) 'skipped build keeps the exe'
             $pch = Initialize-LcPch -Flavor test
             Assert-Match ([IO.File]::ReadAllText($pch)) 'lc-prelude\.h'
+            # A compile error in the solution comes back as g++'s output for that file.
+            $bad = Join-Path $tmp 'odd\broken.cpp'
+            [IO.File]::WriteAllText($bad, "class Solution {`npublic:`n    int add(int a, int b) { return a + undefined_name; }`n};`n", $utf8)
+            $b3 = Build-LcExe -SrcPath $bad -HarnessText $h -UserText (New-LcUserText -SrcPath $bad -Info $si) -Flavor test
+            Assert-True (-not $b3.Ok) 'a broken solution must fail to build'
+            Assert-Match $b3.Errors "broken\.cpp:3:\d+: error: 'undefined_name' was not declared"
         }
 
         # e2e: method mismatch
@@ -116,6 +158,11 @@
         Assert-Match $r.Out "parameter type the harness doesn't support"
         Assert-True ($r.Out -notmatch 'required from') "e2e: unsupported type shows the template dump`n$($r.Out)"
         Assert-Equal $r.Code 1 'e2e: unsupported type exit code'
+        # A type only the solution defines is unknown to the harness TU.
+        [IO.File]::WriteAllText((Join-Path $tmp 'odd\own-type.cpp'), "struct Node { int v; };`nclass Solution {`npublic:`n    int f(Node* n) { return n ? n->v : 0; }`n};`n", $utf8)
+        $r = Invoke-Lc (Join-Path $tmp 'odd\own-type.cpp')
+        Assert-True $r.Out.Contains("This problem uses a parameter type the harness doesn't support yet: Node") "e2e: own type`n$($r.Out)"
+        Assert-Equal $r.Code 1 'e2e: own type exit code'
 
         # e2e: a class Solution without a public method is not taken for a design problem
         [IO.File]::WriteAllText((Join-Path $tmp 'odd\private-only.cpp'), "class Solution {`n    int f(int a) { return a; }`n};`n", $utf8)

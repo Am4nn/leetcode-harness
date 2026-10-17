@@ -87,16 +87,19 @@ function Start-Measured {
 # -CompileArgs: the full g++ arguments minus -o, with -O2 already replaced by -O0
 # (at -O2 the compiler moves code and gdb reports the wrong line).
 # -GdbRun: the text after gdb's "run", e.g. '< input.txt > NUL 2> NUL'.
+# -Build: instead of -CompileArgs, a script block that builds -DebugExe.
 function Show-CrashLine {
     param(
-        [Parameter(Mandatory)][string[]]$CompileArgs,
+        [string[]]$CompileArgs,
+        [scriptblock]$Build,
         [Parameter(Mandatory)][string]$DebugExe,
         [Parameter(Mandatory)][string]$GdbRun,
         [Parameter(Mandatory)][string]$WorkDir,
         [Parameter(Mandatory)][string]$Src
     )
     Write-Host 'Finding the crash line...' -ForegroundColor DarkGray
-    & $Gpp @CompileArgs -o $DebugExe 2>&1 | Out-Null
+    if ($Build) { & $Build | Out-Null }
+    else { & $Gpp @CompileArgs -o $DebugExe 2>&1 | Out-Null }
     Push-Location $WorkDir
     # bt 20: a stack overflow has millions of frames.
     $out = & $Gdb -q -batch -nx -ex "run $GdbRun" -ex 'bt 20' $DebugExe 2>&1 | ForEach-Object { "$_" }

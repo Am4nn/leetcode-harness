@@ -57,7 +57,7 @@ if ($q) {
 
 $info = $null
 if ($q) {
-    try { $info = Get-LcInfoFromMeta $q.metaData }
+    try { $info = Get-LcInfoFromMeta $q.metaData $srcText }
     catch {
         $t = $_.Exception.Message -replace '^unsupported LeetCode type: ', ''
         Write-Host "This problem uses a parameter type the harness doesn't support yet: $t" -ForegroundColor Red
@@ -108,13 +108,20 @@ if ($info.Kind -eq 'function' -and $cases.Count -gt 0) {
 }
 
 # ---- build ----
-$wrapperText = New-LcWrapperText -SrcPath $src -Info $info
-$build = Build-LcExe -Slug $slug -SrcPath $src -WrapperText $wrapperText -Flavor test -Name 'test'
+$harnessText = New-LcHarnessText -Info $info
+$userText = New-LcUserText -SrcPath $src -Info $info
+$build = Build-LcExe -SrcPath $src -HarnessText $harnessText -UserText $userText -Flavor test
 if (-not $build.Ok) {
-    if ($build.Errors -match 'lc: unsupported parameter type') {
-        $t = '?'
-        if ($build.Errors -match "always_false<(.+?) ?>' evaluates") { $t = $Matches[1] }
+    $t = $null
+    if ($build.Stage -eq 'harness') {
+        # The harness only sees the signature's types: a type lc.h can't read, or one only the solution defines.
+        # An undeclared type comes first: g++ then goes on with int in its place.
+        if ($build.Errors -match "error: '(\w+)' (was not declared|does not name a type|has not been declared)") { $t = $Matches[1] }
+        elseif ($build.Errors -match "always_false<(.+?) ?>' evaluates") { $t = $Matches[1] }
         elseif ($build.Errors -match '\[with T = ([^;\]]+)') { $t = $Matches[1] }
+        elseif ($build.Errors -match 'lc: unsupported parameter type') { $t = '?' }
+    }
+    if ($t) {
         Write-Host "This problem uses a parameter type the harness doesn't support yet: $t" -ForegroundColor Red
     } else {
         Write-Host $build.Errors
@@ -198,9 +205,8 @@ function Write-LcStop($run, [int]$FirstN = 1) {
     if ($null -eq $run.Pending -and $m.Code -eq 2) { return $true }  # the runner printed the problem
     Write-Host "  CRASH ${n}: $(Explain $m.Code)" -ForegroundColor Red
     if ($m.Code -ne -1073741510) {  # not Ctrl+C
-        $debugFlags = @($CppFlags) + @($TestFlags | ForEach-Object { if ($_ -eq '-O2') { '-O0' } else { $_ } })
-        $debugArgs = $debugFlags + @('-include', (Initialize-LcPch -Flavor test), (Join-Path $buildDir 'test.cpp'))
-        Show-CrashLine -CompileArgs $debugArgs -DebugExe (Join-Path $buildDir 'test-debug.exe') `
+        $debugBuild = { Build-LcExe -SrcPath $script:src -HarnessText $script:harnessText -UserText $script:userText -Flavor debug }
+        Show-CrashLine -Build $debugBuild -DebugExe (Join-Path $buildDir 'debug.exe') `
             -GdbRun 'test cases.txt results-debug.txt > NUL 2> NUL' -WorkDir $buildDir -Src $src
     }
     return $true

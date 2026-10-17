@@ -1,6 +1,7 @@
 // Counts heap allocations by replacing every global operator new/delete (Windows UCRT).
 // The replacements are plain (non-inline) definitions, as the standard requires, so include this
-// header in exactly one translation unit: the generated wrapper. Relies on lc-prelude.h.
+// header in exactly one translation unit: the generated harness. The linker then uses them for the whole
+// program, the solution's own translation unit included. Relies on lc-prelude.h.
 #ifndef LC_ALLOC_H
 #define LC_ALLOC_H
 

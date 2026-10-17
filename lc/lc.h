@@ -1,4 +1,4 @@
-// Everything a generated LeetCode wrapper needs. Include after lc-prelude.h.
+// Everything a generated LeetCode harness TU needs. Include after lc-prelude.h.
 #ifndef LC_H
 #define LC_H
 

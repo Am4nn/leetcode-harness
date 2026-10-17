@@ -657,6 +657,18 @@ template <class Tuple> Tuple parse_args(const std::vector<std::string>& texts, c
 
 }  // namespace detail
 
+// The class name as written in the source (ops[0] of a design case). Defaults to the type's RTTI name;
+// a generated harness specializes it for its proxy with the real class name.
+template <class C> struct DesignName {
+    static std::string get() {
+        int status = 0;
+        char* d = abi::__cxa_demangle(typeid(C).name(), nullptr, nullptr, &status);
+        std::string s = status == 0 && d ? d : typeid(C).name();
+        std::free(d);
+        return s;
+    }
+};
+
 template <class C> struct Method {
     std::vector<std::string> names;
     size_t arity = 0;  // number of parameters
@@ -721,15 +733,6 @@ template <class C, class R, class M, class... A> Method<C> make_method(M m, std:
     return mt;
 }
 
-// The class name as written in the source (ops[0] of a design case), from the type's RTTI name.
-template <class C> std::string class_name() {
-    int status = 0;
-    char* d = abi::__cxa_demangle(typeid(C).name(), nullptr, nullptr, &status);
-    std::string s = status == 0 && d ? d : typeid(C).name();
-    std::free(d);
-    return s;
-}
-
 template <class C> using MethodList = std::vector<std::pair<std::string, const Method<C>*>>;
 
 // One random design sequence at n calls: constructor arguments, then n random methods with random
@@ -791,7 +794,7 @@ int gen_design(const Cli& cli, const std::vector<std::string>& ctor_names, const
     if (!load_spec(cli, spec)) return 2;
     std::ofstream out;
     if (!open_cases_out(cli, out)) return 2;
-    const std::string cls = class_name<C>();
+    const std::string cls = DesignName<C>::get();
     std::vector<long long> sizes = gen_sizes(cli);
     std::vector<std::function<void(C&)>> calls;
     for (long long i = 0; i < cli.count; ++i) {

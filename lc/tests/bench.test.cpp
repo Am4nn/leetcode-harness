@@ -58,6 +58,16 @@ struct Recorder {
     void put(int x) { rec_ops.push_back("put"); rec_args.push_back("[" + to_string(x) + "]"); }
     int peek() { rec_ops.push_back("peek"); rec_args.push_back("[]"); return 0; }
 };
+// Stands in for a class under another name, as a generated harness's proxy does.
+struct Stand {
+    void add(int) {}
+};
+namespace lc {
+template <> struct DesignName<Stand> {
+    static std::string get() { return "RealName"; }
+};
+}  // namespace lc
+
 struct Rec {
     int record(vector<int>& nums) { recorded = lc::show(nums); return 0; }
     long long gridSum(vector<vector<int>>& g) {
@@ -354,6 +364,17 @@ int main(int, char** argv) {
         bool all5 = true;
         for (auto& c : lc::read_cases(last_out().string())) all5 = all5 && lc::parse<vector<int>>(c.args[0]).size() == 5;
         CHECK(all5);
+    }
+
+    // gen names the class through DesignName.
+    {
+        run("gen", "calls 10\nparam x val 1 5\n", {"--count", "2", "--max-n", "3", "--seed", "1"},
+            [](int ac, char** av) { return lc::run_design<Stand>(ac, av, {}, {{"add", lc::method(&Stand::add, {"x"})}}); });
+        auto cases = lc::read_cases(last_out().string());
+        CHECK_EQ(cases.size(), 2u);
+        bool named = true;
+        for (auto& c : cases) named = named && c.ops.starts_with("[\"RealName\",");
+        CHECK(named);
     }
 
     // R16: a 2-D size parameter runs up to len_max x len_max cells, and reports cells.
