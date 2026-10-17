@@ -117,7 +117,11 @@ function ConvertTo-LcSpec {
         if ($isStr -and -not $chars) { $chars = $dChars }
         if (-not $isStr -and -not $val) {
             if ($isVec -or $isNode) { $val = $dVal }
-            elseif ($t -in 'int', 'long long', 'double') { $val = @(1, 100000) }
+            elseif ($t -in 'int', 'long long', 'double') {
+                if ($n -eq $sizeName) { $val = @(1, 100000) }
+                elseif ($t -eq 'long long') { $val = @(-1000000000000000000, 1000000000000000000) }
+                else { $val = $dVal }
+            }
             elseif ($t -eq 'char' -and -not $chars) { $chars = $dChars }
         }
         $parts = @("param $n")

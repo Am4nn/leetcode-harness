@@ -44,6 +44,12 @@
     Assert-True ($s.Assumed -contains '(assumed: no constraint found for nums)')
     Assert-Equal $s.MaxN 100000
 
+    $sc = Get-LcInfoFromMeta '{"name":"f","params":[{"name":"a","type":"integer"},{"name":"b","type":"integer"}],"return":{"type":"integer"}}'
+    $s = ConvertTo-LcSpec -Constraints @() -Info $sc
+    Assert-Match $s.Text '(?m)^param a val 1 100000\r?$'
+    Assert-Match $s.Text '(?m)^param b val -1000000000 1000000000\r?$'
+    Assert-True ($s.Assumed -contains '(assumed: no constraint found for b)')
+
     $pts = { param($ns, $f) @($ns | ForEach-Object { @{ n = $_; ms = (& $f $_) } }) }
     Assert-Equal (Get-LcComplexity (& $pts 1000, 2000, 4000, 8000 { param($n) 1e-6 * $n * $n })).Label 'O(n^2)'
     Assert-Equal (Get-LcComplexity (& $pts 10000, 20000, 40000, 80000 { param($n) 1e-5 * $n })).Label 'O(n)'
