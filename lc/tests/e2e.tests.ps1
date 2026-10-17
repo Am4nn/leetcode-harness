@@ -95,8 +95,15 @@
         Assert-Match $twoSumDir '\\lc-e2e-build\\lc\\two-sum-[0-9a-f]{8}$'
         $exe = Join-Path $twoSumDir 'test.exe'
         $mtime = (Get-Item -LiteralPath $exe).LastWriteTimeUtc
+        # R31: an events.jsonl newer than journey.md (e.g. after a pull) gets a full regeneration,
+        # so a row missing from journey.md comes back on the next run of another problem.
+        $jmd = Join-Path $journey 'journey.md'
+        $fullMd = [IO.File]::ReadAllText($jmd)
+        [IO.File]::WriteAllText($jmd, (($fullMd -split "`n" | Where-Object { $_ -notmatch 'rotate-array' }) -join "`n"), $utf8)
+        (Get-Item -LiteralPath (Join-Path $journey 'events.jsonl')).LastWriteTimeUtc = (Get-Item -LiteralPath $jmd).LastWriteTimeUtc.AddSeconds(2)
         $r = Invoke-Lc $twoSum
         Assert-Equal $r.Code 0 "e2e: two-sum rerun`n$($r.Out)"
+        Assert-Match ([IO.File]::ReadAllText($jmd)) '\[Rotate Array\]' 'e2e: stale journey.md not regenerated'
         Assert-Equal (Get-Item -LiteralPath $exe).LastWriteTimeUtc $mtime 'e2e: rerun must not rebuild the exe'
         Assert-True ($r.Ms -lt $firstTwoSum.Ms) "e2e: rerun $($r.Ms) ms not faster than first run $($firstTwoSum.Ms) ms"
 
@@ -192,6 +199,17 @@
         Assert-True ($r.Out -notmatch '----') "e2e: partial typed input ran a case`n$($r.Out)"
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $tmp 'tests\my-scratch.txt'))) 'e2e: partial typed input saved a case'
 
+        # e2e: a cached "not a LeetCode problem" marker gives one short line on every run (no network);
+        # R30: a typed run where no case ran writes no event and no snapshot
+        $evCount = @(Read-LcEvents $journey).Count
+        $none = Join-Path $tmp 'tests\.meta\my-scratch.none'
+        [IO.File]::WriteAllText($none, '', $utf8)
+        $r = Invoke-Lc (Join-Path $tmp 'my-scratch.cpp')
+        Remove-Item -LiteralPath $none
+        Assert-Equal (@($r.Out.Trim() -split '\r?\n')[0..1] -join '|') 'my-scratch|(not a LeetCode problem: my-scratch)' "e2e: not a problem`n$($r.Out)"
+        Assert-Equal @(Read-LcEvents $journey).Count $evCount 'e2e: typed runs without a case wrote events'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $journey 'snapshots\my-scratch'))) 'e2e: typed runs without a case took a snapshot'
+
         # e2e: a typed case that crashes is still saved
         $typed = Join-Path $tmp 'typed'
         New-Item -ItemType Directory -Force $typed | Out-Null
@@ -281,6 +299,31 @@
         }
         Assert-True (-not ($files -match '^(tests/rotate-array\.txt|odd/)')) "e2e: solve commit took other files ($($files -join ', '))"
         Assert-Match ((& $git -C $tmp show HEAD:journey/events.jsonl) -join "`n") '"event":"note".*"text":"two pointers next"'
+
+        # e2e: a failed solve commit prints one line and waits (Press Enter), instead of vanishing
+        $hook = Join-Path $tmp '.git\hooks\pre-commit'
+        [IO.File]::WriteAllText($hook, "#!/bin/sh`necho 'hook says no' >&2`nexit 1`n")
+        try {
+            [IO.File]::AppendAllText($twoSum, "// blocked`n", $utf8)
+            $r = Invoke-Lc $twoSum -Wait -Commit -Stdin "`n"
+        } finally { Remove-Item -LiteralPath $hook }
+        Assert-Equal $r.Code 0 "e2e: failed commit exit code`n$($r.Out)"
+        Assert-Match $r.Out '\(not committed: hook says no\)\s+Press Enter to close'
+        Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '2' 'e2e: blocked commit committed'
+
+        # e2e: method-name mismatch - all compared cases pass: note prompt and note, but no solved and no commit
+        $mm2 = Join-Path $tmp 'mismatch2'
+        New-Item -ItemType Directory -Force (Join-Path $mm2 'tests\.meta') | Out-Null
+        Copy-Item (Join-Path $tmp 'tests\.meta\two-sum.json') (Join-Path $mm2 'tests\.meta')
+        [IO.File]::WriteAllText((Join-Path $mm2 'two-sum.cpp'), ([IO.File]::ReadAllText($twoSum) -replace '\btwoSum\(', 'pairSum('), $utf8)
+        $r = Invoke-Lc (Join-Path $mm2 'two-sum.cpp') -Wait -Commit -Stdin "renamed it`n"
+        Assert-Equal $r.Code 0 "e2e: mismatch run`n$($r.Out)"
+        Assert-Match $r.Out 'LeetCode expects twoSum\('
+        Assert-True $r.Out.Contains('Note (Enter to skip): ') "e2e: mismatch note prompt`n$($r.Out)"
+        $mine = @(Read-LcEvents $journey | Where-Object { $_.file -eq 'mismatch2/two-sum.cpp' })
+        Assert-Equal (($mine | ForEach-Object { $_.event }) -join ',') 'test_run,note' 'e2e: mismatch events'
+        Assert-Equal $mine[1].text 'renamed it'
+        Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '2' 'e2e: mismatch run committed'
 
         # e2e: the real dsa/journey was never written
         if ($null -eq $realEventsTime) { Assert-True (-not (Test-Path -LiteralPath $realEvents)) 'e2e: wrote the real journey' }

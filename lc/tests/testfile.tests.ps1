@@ -37,15 +37,17 @@
                 return $null
             }
             $r1 = Get-LcCachedQuestion -TestsDir $tmp -Slug 'my-scratch'
-            Assert-True ($null -eq $r1.Question -and $r1.Tried -and -not $r1.Fetched) 'missing: first call tries'
+            Assert-True ($null -eq $r1.Question -and $r1.Tried -and -not $r1.Fetched -and $r1.NotProblem) 'missing: first call tries'
             Assert-True (Test-Path -LiteralPath (Join-Path $tmp '.meta\my-scratch.none')) 'missing: marker written'
             $r2 = Get-LcCachedQuestion -TestsDir $tmp -Slug 'my-scratch'
-            Assert-True ($null -eq $r2.Question -and -not $r2.Tried) 'missing: marker skips the fetch'
+            Assert-True ($null -eq $r2.Question -and -not $r2.Tried -and $r2.NotProblem) 'missing: marker skips the fetch'
+            $r2o = Get-LcCachedQuestion -TestsDir $tmp -Slug 'my-scratch' -Offline
+            Assert-True ($r2o.NotProblem -and -not $r2o.Tried) 'missing: marker read offline too'
             Assert-Equal $calls.n 1 'missing: fetched once'
 
             $calls.missing = $false
             $r3 = Get-LcCachedQuestion -TestsDir $tmp -Slug 'flaky'
-            Assert-True ($null -eq $r3.Question -and $r3.Tried) 'network error: tried'
+            Assert-True ($null -eq $r3.Question -and $r3.Tried -and -not $r3.NotProblem) 'network error: tried'
             Assert-True (-not (Test-Path -LiteralPath (Join-Path $tmp '.meta\flaky.none'))) 'network error: no marker'
             $null = Get-LcCachedQuestion -TestsDir $tmp -Slug 'flaky'
             Assert-Equal $calls.n 3 'network error: retried'

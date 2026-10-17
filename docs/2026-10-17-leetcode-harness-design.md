@@ -170,8 +170,8 @@ Common fields: `ts` (ISO local time with offset), `event`, `slug`, `file`, `src_
 
 | event | extra fields |
 |---|---|
-| `fetch` | `ok`, `id`, `title`, `difficulty`, `tags`, `paid_only`, `error?` |
-| `test_run` | `compile_ok`, `compile_ms`, `cases: [{n, status: pass/fail/print/crash, ms, mem_kb?}]`, `passed`, `failed`, `printed`, `crash?: {code, cause, line?}` |
+| `fetch` | `ok`, `id`, `title`, `difficulty`, `tags`, `paid_only`. Written only on a successful fetch, so `ok` is always true and `error` is never written. |
+| `test_run` | `compile_ok`, `compile_ms`, `cases: [{n, status: pass/fail/print/error/crash, ms, mem_kb?}]` (`error`: the case threw or its input couldn't be read; it counts in `failed`), `passed`, `failed`, `printed`, `crash?: {code, cause, line?}` |
 | `solved` | written on the first all-pass for a given `src_hash`: `attempts` (test runs for this slug since the previous `solved`, or since the first run), `max_ms` |
 | `analyze_run` | `complexity`, `points: [{n, ms}]`, `tle_risk`, `alloc: {count, bytes, peak}`, `calls: {fn: {count, depth}}`, `brute?: {cases, mismatch_input?}` |
 | `note` | `text` |

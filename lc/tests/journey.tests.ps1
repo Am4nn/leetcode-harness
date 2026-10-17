@@ -136,29 +136,29 @@
         [IO.File]::WriteAllText((Join-Path $rp 'new.txt'), 'n')
         $outside = Join-Path $tmp 'outside.txt'; [IO.File]::WriteAllText($outside, 'x')
         $r = Invoke-LcSolveCommit -RepoDir $rp -Paths @((Join-Path $rp 'sol.cpp'), (Join-Path $rp 'new.txt'), (Join-Path $rp 'missing.txt'), $outside) -Message 'solve: two-sum (Easy)'
-        Assert-True ($r -eq $true) 'commit returned true'
+        Assert-True ($r -is [bool] -and $r) 'commit returned true'
         Assert-Equal ((& $git -C $rp log -1 --format=%s) -join '') 'solve: two-sum (Easy)'
         $files = (& $git -C $rp show --name-only --format= HEAD) | Sort-Object
         Assert-Equal ($files -join ',') 'new.txt,sol.cpp'
         Assert-Match ((& $git -C $rp status --porcelain) -join "`n") '^ M other\.txt'
-        Assert-True ((Invoke-LcSolveCommit -RepoDir $rp -Paths @((Join-Path $rp 'sol.cpp')) -Message 'again') -eq $false) 'nothing to commit'
+        $res = @(Invoke-LcSolveCommit -RepoDir $rp -Paths @((Join-Path $rp 'sol.cpp')) -Message 'again' 6>&1)
+        Assert-True ($res.Count -eq 1 -and $res[0] -is [bool] -and -not $res[0]) 'nothing to commit: $false, silent'
         Assert-Equal ((& $git -C $rp log -1 --format=%s) -join '') 'solve: two-sum (Easy)'
 
-        # R13: a failing commit prints git's first meaningful line, without PS 5.1's "git.exe : " or warnings
+        # A failing commit returns git's first meaningful line as a string (R13: without PS 5.1's
+        # "git.exe : " or warning lines) and prints nothing; the caller prints it and waits.
         [IO.File]::WriteAllText((Join-Path $rp '.git\hooks\pre-commit'), "#!/bin/sh`necho 'warning: first' >&2`necho 'hook says no' >&2`nexit 1`n")
         [IO.File]::WriteAllText((Join-Path $rp 'sol.cpp'), 'v3')
-        $res = Invoke-LcSolveCommit -RepoDir $rp -Paths @((Join-Path $rp 'sol.cpp')) -Message 'blocked' 6>&1
-        $text = (@($res) | Where-Object { $_ -isnot [bool] } | ForEach-Object { "$_" }) -join "`n"
-        Assert-Equal $text '(not committed: hook says no)'
-        Assert-True (@($res)[-1] -eq $false) 'failed commit returns false'
+        $res = @(Invoke-LcSolveCommit -RepoDir $rp -Paths @((Join-Path $rp 'sol.cpp')) -Message 'blocked' 6>&1)
+        Assert-True ($res.Count -eq 1 -and $res[0] -is [string]) "failed commit: one string, no output ($($res -join '|'))"
+        Assert-Equal $res[0] 'hook says no'
 
         # non-repo
         $nr = Join-Path $tmp 'norepo'; New-Item -ItemType Directory $nr | Out-Null
         [IO.File]::WriteAllText((Join-Path $nr 'a.cpp'), 'x')
-        $res = Invoke-LcSolveCommit -RepoDir $nr -Paths @((Join-Path $nr 'a.cpp')) -Message 'm' 6>&1
-        $text = (@($res) | ForEach-Object { "$_" }) -join "`n"
-        Assert-Match $text '\(not committed:'
-        Assert-True (@($res)[-1] -eq $false) 'returns false'
+        $res = @(Invoke-LcSolveCommit -RepoDir $nr -Paths @((Join-Path $nr 'a.cpp')) -Message 'm' 6>&1)
+        Assert-True ($res.Count -eq 1 -and $res[0] -is [string]) "non-repo: one string, no output ($($res -join '|'))"
+        Assert-Equal $res[0] 'not a git repo'
     }
     finally { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
 }

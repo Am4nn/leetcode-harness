@@ -29,10 +29,16 @@ $inv = [Globalization.CultureInfo]::InvariantCulture
 
 # ---- journey (silent): events, snapshot, journey.md, solve commit ----
 $events = $null   # this slug's events, read once on the first new event
-$jRun = $null     # this run's test_run, from the build on: @{ CompileOk; CompileMs; Cases; Crash; Clean; MaxMs }
+$jStale = $false  # events.jsonl was newer than journey.md before this run wrote anything (R31)
+$jRun = $null     # this run's test_run, from the build on: @{ CompileOk; CompileMs; Cases; Crash; AllPass; MaxMs }
 
 function Add-LcEvent([string]$Name, [Collections.IDictionary]$Data = @{}) {
-    if ($null -eq $script:events) { $script:events = [Collections.ArrayList]@(Read-LcEvents $JourneyRoot -Slug $slug) }
+    if ($null -eq $script:events) {
+        $script:events = [Collections.ArrayList]@(Read-LcEvents $JourneyRoot -Slug $slug)
+        $ev = [IO.FileInfo](Join-Path $JourneyRoot 'events.jsonl')
+        $md = [IO.FileInfo](Join-Path $JourneyRoot 'journey.md')
+        $script:jStale = $ev.Exists -and $md.Exists -and $ev.LastWriteTimeUtc -gt $md.LastWriteTimeUtc
+    }
     [void]$script:events.Add((Write-LcEvent -Root $JourneyRoot -Event $Name -Slug $slug -File $relFile -SrcHash $srcHash -Data $Data -PassThru))
 }
 
@@ -46,7 +52,8 @@ function Add-LcRunCases($run, [int]$FirstN = 1) {
     if ($null -ne $run.Pending) { [void]$script:jRun.Cases.Add([ordered]@{ n = $FirstN + $run.Pending - 1; status = 'crash' }) }
 }
 
-# Writes test_run (+ solved), the snapshot and journey.md; asks for a note after a clean run; commits a solve.
+# Writes test_run (+ solved), the snapshot and journey.md; asks for a note after an all-pass run;
+# commits a solve. A failed commit prints one line and waits, so it can be read before the task hides.
 function Complete-LcJourney([int]$code) {
     $r = $script:jRun
     $cases = @($r.Cases.ToArray())
@@ -60,23 +67,30 @@ function Complete-LcJourney([int]$code) {
     Add-LcEvent 'test_run' $data
     [void](Save-LcSnapshot -Root $JourneyRoot -Slug $slug -SrcPath $src -SrcHash $srcHash)
     $solved = $false
-    if ($r.Clean -and -not (Test-LcSolvedBefore $script:events $slug $srcHash)) {
+    # A method-name mismatch never counts as a solve, but still gets the note prompt.
+    if ($r.AllPass -and -not $mismatch -and -not (Test-LcSolvedBefore $script:events $slug $srcHash)) {
         Add-LcEvent 'solved' ([ordered]@{ attempts = (Get-LcAttempts $script:events $slug); max_ms = $r.MaxMs })
         $solved = $true
     }
-    if ($r.Clean -and -not $NoWait) {
+    if ($r.AllPass -and -not $NoWait) {
         Write-Host "`nNote (Enter to skip): " -NoNewline
         $note = [Console]::ReadLine()
         if ($note -and $note.Trim()) { Add-LcEvent 'note' @{ text = $note.Trim() } }
     }
-    Update-LcJourneyFile -Root $JourneyRoot -MetaDir (Join-Path $testsDir '.meta') -Slug $slug -Events $script:events
+    $metaDir = Join-Path $testsDir '.meta'
+    if ($script:jStale) { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $metaDir }
+    else { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $metaDir -Slug $slug -Events $script:events }
     if ($solved -and -not $NoCommit) {
         $msg = "solve: $slug"
         if ($q -and $q.difficulty) { $msg += " ($($q.difficulty))" }
-        $paths = @($src, $testFile, (Join-Path (Join-Path $testsDir '.meta') "$slug.json"), $JourneyRoot)
-        [void](Invoke-LcSolveCommit -RepoDir (Split-Path -Parent $src) -Paths $paths -Message $msg)
+        $paths = @($src, $testFile, (Join-Path $metaDir "$slug.json"), $JourneyRoot)
+        $res = Invoke-LcSolveCommit -RepoDir (Split-Path -Parent $src) -Paths $paths -Message $msg
+        if ($res -is [string]) {
+            Write-Host "(not committed: $res)"
+            if (-not $NoWait) { Finish $code }
+        }
     }
-    if ($r.Clean -or $NoWait) { exit $code }
+    if ($r.AllPass -or $NoWait) { exit $code }
     Finish $code
 }
 
@@ -114,7 +128,8 @@ if ($q) {
     Write-Host "$slug  ($about)" -ForegroundColor Cyan
 } else {
     Write-Host $slug -ForegroundColor Cyan
-    if ($fetch.Tried) { Write-Host "Couldn't fetch $slug from LeetCode ($LcFetchError)." -ForegroundColor DarkGray }
+    if ($fetch.NotProblem) { Write-Host "(not a LeetCode problem: $slug)" -ForegroundColor DarkGray }
+    elseif ($fetch.Tried) { Write-Host "Couldn't fetch $slug from LeetCode ($LcFetchError)." -ForegroundColor DarkGray }
 }
 
 $info = $null
@@ -180,7 +195,7 @@ if ($info.Kind -eq 'function' -and $cases.Count -gt 0) {
 # ---- build ----
 $harnessText = New-LcHarnessText -Info $info
 $userText = New-LcUserText -SrcPath $src -Info $info
-$jRun = @{ CompileOk = $false; CompileMs = 0; Cases = New-Object Collections.ArrayList; Crash = $null; Clean = $false; MaxMs = 0 }
+$jRun = @{ CompileOk = $false; CompileMs = 0; Cases = New-Object Collections.ArrayList; Crash = $null; AllPass = $false; MaxMs = 0 }
 $build = Build-LcExe -SrcPath $src -HarnessText $harnessText -UserText $userText -Flavor test
 $jRun.CompileOk = [bool]$build.Ok
 $jRun.CompileMs = $build.Ms
@@ -326,6 +341,7 @@ if ($cases.Count -eq 0) {
         if (Write-LcStop $run -FirstN $k) { Exit-Lc 1 }
         if ($names.Count -eq 0) { break }
     }
+    if ($k -eq 0) { $jRun = $null }  # R30: no case ran, so no test_run and no snapshot
     Exit-Lc $code
 }
 
@@ -345,7 +361,7 @@ if ($errors) { $parts += "$errors error" + $(if ($errors -gt 1) { 's' } else { '
 $allPassed = $passed -eq $compared -and $errors -eq 0
 $color = if (-not $allPassed) { 'Red' } elseif ($compared) { 'Green' } else { 'Gray' }
 Write-Host ($parts -join ' - ') -ForegroundColor $color
-# Clean: every compared case passed (at least one), against LeetCode's own method name.
-$jRun.Clean = $allPassed -and $compared -gt 0 -and -not $mismatch
-if ($jRun.Clean) { $jRun.MaxMs = [double](@($run.Results | ForEach-Object { [double]$_.ms }) | Measure-Object -Maximum).Maximum }
+# All pass: every compared case passed (at least one) and no case errored.
+$jRun.AllPass = $allPassed -and $compared -gt 0
+if ($jRun.AllPass) { $jRun.MaxMs = [double](@($run.Results | ForEach-Object { [double]$_.ms }) | Measure-Object -Maximum).Maximum }
 Exit-Lc $(if ($allPassed) { 0 } else { 1 })

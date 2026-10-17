@@ -1,5 +1,5 @@
 # Journey: event log, attempts, snapshots, journey.md, solve commit.
-# Function library: dot-source it. No side effects, no output (except Invoke-LcSolveCommit's failure line).
+# Function library: dot-source it. No side effects, no output.
 
 function New-LcUtf8 { New-Object Text.UTF8Encoding $false }
 
@@ -206,12 +206,15 @@ function Get-LcGitReason($Output) {
     return 'git failed'
 }
 
+# Commits only the given paths (inside the repo holding RepoDir); never pushes. Prints nothing.
+# Returns $true when it committed, $false when there was nothing to commit, and the reason
+# (a string) when it could not commit: not a git repo, or git failed.
 function Invoke-LcSolveCommit([string]$RepoDir, [string[]]$Paths, [string]$Message) {
     $old = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
         $top = (& git -C $RepoDir rev-parse --show-toplevel 2>$null | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or -not $top) { Write-Host '(not committed: not a git repo)'; return $false }
+        if ($LASTEXITCODE -ne 0 -or -not $top) { return 'not a git repo' }
         $topFull = [IO.Path]::GetFullPath($top.Replace('/', '\')).TrimEnd('\') + '\'
         $inside = @()
         foreach ($p in $Paths) {
@@ -221,11 +224,11 @@ function Invoke-LcSolveCommit([string]$RepoDir, [string[]]$Paths, [string]$Messa
         }
         if (-not $inside.Count) { return $false }
         $r = @(& git -C $top add -- @inside 2>&1)
-        if ($LASTEXITCODE -ne 0) { Write-Host "(not committed: $(Get-LcGitReason $r))"; return $false }
+        if ($LASTEXITCODE -ne 0) { return [string](Get-LcGitReason $r) }
         & git -C $top diff --cached --quiet -- @inside 2>$null
         if ($LASTEXITCODE -eq 0) { return $false }
         $r = @(& git -C $top commit -m $Message -- @inside 2>&1)
-        if ($LASTEXITCODE -ne 0) { Write-Host "(not committed: $(Get-LcGitReason $r))"; return $false }
+        if ($LASTEXITCODE -ne 0) { return [string](Get-LcGitReason $r) }
         return $true
     } finally { $ErrorActionPreference = $old }
 }

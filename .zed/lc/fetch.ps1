@@ -29,27 +29,29 @@ function Get-LcQuestion([string]$Slug) {
     }
 }
 
-# Returns @{ Question; Fetched; Tried }. Tried: LeetCode was contacted on this call.
-# A definite "no such problem" is remembered in .meta/<slug>.none so later runs skip the fetch.
+# Returns @{ Question; Fetched; Tried; NotProblem }. Tried: LeetCode was contacted on this call.
+# A definite "no such problem" is remembered in .meta/<slug>.none so later runs skip the fetch;
+# NotProblem is true when that marker exists (also offline) or this call just wrote it.
 function Get-LcCachedQuestion([string]$TestsDir, [string]$Slug, [switch]$Offline) {
     $meta = Join-Path (Join-Path $TestsDir '.meta') "$Slug.json"
     $none = Join-Path (Join-Path $TestsDir '.meta') "$Slug.none"
     if (Test-Path -LiteralPath $meta) {
         $q = [IO.File]::ReadAllText($meta, [Text.Encoding]::UTF8) | ConvertFrom-Json
-        return @{ Question = $q; Fetched = $false; Tried = $false }
+        return @{ Question = $q; Fetched = $false; Tried = $false; NotProblem = $false }
     }
-    if ($Offline -or (Test-Path -LiteralPath $none)) { return @{ Question = $null; Fetched = $false; Tried = $false } }
+    if (Test-Path -LiteralPath $none) { return @{ Question = $null; Fetched = $false; Tried = $false; NotProblem = $true } }
+    if ($Offline) { return @{ Question = $null; Fetched = $false; Tried = $false; NotProblem = $false } }
     $q = Get-LcQuestion -Slug $Slug
     if ($null -eq $q) {
         if ($script:LcFetchMissing) {
             New-Item -ItemType Directory -Force (Split-Path -Parent $none) | Out-Null
             [IO.File]::WriteAllText($none, '', (New-Object Text.UTF8Encoding $false))
         }
-        return @{ Question = $null; Fetched = $false; Tried = $true }
+        return @{ Question = $null; Fetched = $false; Tried = $true; NotProblem = [bool]$script:LcFetchMissing }
     }
     New-Item -ItemType Directory -Force (Split-Path -Parent $meta) | Out-Null
     [IO.File]::WriteAllText($meta, ($q | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding $false))
-    return @{ Question = $q; Fetched = $true; Tried = $true }
+    return @{ Question = $q; Fetched = $true; Tried = $true; NotProblem = $false }
 }
 
 function ConvertFrom-LcHtml([string]$html) {
