@@ -38,5 +38,25 @@
     "allow_concurrent_runs": false,
     "reveal": "always",
     "hide": "always"
+  },
+  {
+    "label": "LeetCode test (Alt+F7)",
+    "command": "powershell",
+    "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".zed/lc.ps1", "-Mode", "test", "$ZED_FILE"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "always"
+  },
+  {
+    "label": "LeetCode analyze (Alt+F8)",
+    "command": "powershell",
+    "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".zed/lc.ps1", "-Mode", "analyze", "$ZED_FILE"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "always"
   }
 ]

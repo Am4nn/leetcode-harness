@@ -622,7 +622,7 @@ calls 200000
   - `Get-LcComplexity -Points <@(@{ n; ms })> -> @{ Label; Coef; TooFast=[bool] }`
     - Least squares of `ms ≈ c·f(n)` over the candidates.
     - Pick the minimum sum of squared log-ratios. `O(2^n)` is only a candidate when max n ≤ 64.
-    - Points with ms < 0.05 are dropped. If fewer than 3 remain, `TooFast=$true` and `Label='too fast to measure'`.
+    - Points with ms < 0.002 (20 ticks of the 100 ns timer) are dropped. If fewer than 3 remain, `TooFast=$true` and `Label='too fast to measure'`.
   - `Get-LcEstimateMs -Fit <fit> -N <long> -> double`
   - `Get-LcTleVerdict -EstMs <double> -> 'ok' | 'borderline' | 'likely TLE'`
   - **Analyze output** (spec "Analyze task"):
@@ -645,7 +645,7 @@ calls 200000
   - Binary-search constraints (`1 <= nums.length <= 10^4`, `-10^4 < nums[i], target < 10^4`, `All the integers in nums are unique.`, `nums is sorted in ascending order.`) give a `nums` line containing both `sorted` and `distinct`.
   - `nums is sorted in non-decreasing order.` alone gives `sorted` without `distinct`.
   - Constraints `@()` for two-sum give an `Assumed` entry for `nums` and `MaxN` 100000.
-  - Points `n=1000,2000,4000,8000`, `ms=1e-6*n*n` give `O(n^2)`. `ms=1e-5*n` gives `O(n)`. `ms=1e-6*n*log2(n)` gives `O(n log n)`. `n=10..30 step 4`, `ms=1e-6*2^n` gives `O(2^n)`. All ms < 0.05 gives `TooFast`.
+  - Points `n=1000,2000,4000,8000`, `ms=1e-6*n*n` give `O(n^2)`. `ms=1e-5*n` gives `O(n)`. `ms=1e-6*n*log2(n)` gives `O(n log n)`. `n=10..30 step 4`, `ms=1e-6*2^n` gives `O(2^n)`. All ms < 0.002 (`ms=1e-7*n`) gives `TooFast`; `n=10000..80000`, `ms=1e-6*n` (0.01-0.08 ms) still gives `O(n)`.
   - With the `O(n^2)` fit above, `Get-LcEstimateMs -N 100000` gives 10000 (±1%).
   - `Get-LcTleVerdict 400` gives `ok`; 800 gives `borderline`; 1500 gives `likely TLE`.
   - **e2e (append):**
