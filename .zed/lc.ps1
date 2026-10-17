@@ -56,6 +56,7 @@ if ($q) {
 }
 
 $info = $null
+$fromSource = $false
 if ($q) {
     try { $info = Get-LcInfoFromMeta $q.metaData $srcText }
     catch {
@@ -75,11 +76,12 @@ if ($q) {
         # Run the Solution's own public method anyway (a design class can't be substituted).
         $metaKind = $info.Kind
         $info = $null
-        if ($metaKind -eq 'function') { $info = Get-LcInfoFromSource $srcText }
+        if ($metaKind -eq 'function') { $info = Get-LcInfoFromSource $srcText; $fromSource = $true }
         if (-not $info) { Exit-Lc 1 }
     }
 } else {
     $info = Get-LcInfoFromSource $srcText
+    $fromSource = $true
     if (-not $info) {
         $noComments = $srcText -replace '(?s)/\*.*?\*/', ' ' -replace '//[^\r\n]*', ' '
         if ($noComments -notmatch '\bclass\s+Solution\b' -and $noComments -match '\b(class|struct)\s+\w+') {
@@ -89,6 +91,12 @@ if ($q) {
         }
         Exit-Lc 1
     }
+}
+
+# The harness TU never sees the solution: stop on a source-derived type it can't compile.
+if ($fromSource) {
+    $problem = Get-LcSourceTypeProblem $info $srcText
+    if ($problem) { Write-Host $problem -ForegroundColor Red; Exit-Lc 1 }
 }
 
 $cases = @()

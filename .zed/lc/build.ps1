@@ -6,6 +6,12 @@
 
 $script:LcDsaRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
+# Where PCHs, objects and exes go: $env:LC_BUILD_ROOT when set (self-tests), else <dsa>/build.
+function Get-LcBuildRoot {
+    if ($env:LC_BUILD_ROOT) { return $env:LC_BUILD_ROOT }
+    return Join-Path $script:LcDsaRoot 'build'
+}
+
 # The flavor's flags for both translation units, link flags included.
 function Get-LcFlavorFlags([string]$Flavor) {
     switch ($Flavor) {
@@ -46,12 +52,12 @@ function Read-LcStamp([string]$Path) {
     return ''
 }
 
-# build/lc/<slug>-<8 hex of the full path>: files with the same name in different folders don't share one.
+# <build root>/lc/<slug>-<8 hex of the full path>: files with the same name in different folders don't share one.
 function Get-LcBuildDir([string]$SrcPath) {
     $full = [IO.Path]::GetFullPath($SrcPath)
     $slug = [IO.Path]::GetFileNameWithoutExtension($full)
     $hash = (Get-LcTextHash $full.ToLowerInvariant()).Substring(0, 8).ToLowerInvariant()
-    return Join-Path $script:LcDsaRoot "build\lc\$slug-$hash"
+    return Join-Path (Get-LcBuildRoot) "lc\$slug-$hash"
 }
 
 # Writes <Dir>\<Name> (#include lines) and (re)builds <Name>.gch when it's missing, the flags changed or one
@@ -82,20 +88,20 @@ function Get-LcInclude([string]$Header) {
     return '#include "' + ((Join-Path (Join-Path $script:LcDsaRoot 'lc') $Header) -replace '\\', '/') + "`"`n"
 }
 
-# The harness PCH: build/pch/<flavor>/lc-all.h (prelude + lc.h), rebuilt when any lc/*.h changes.
+# The harness PCH: <build root>/pch/<flavor>/lc-all.h (prelude + lc.h), rebuilt when any lc/*.h changes.
 function Initialize-LcPch {
     param([Parameter(Mandatory)][ValidateSet('test', 'debug', 'bench', 'profile')][string]$Flavor)
     $deps = Get-ChildItem -LiteralPath (Join-Path $script:LcDsaRoot 'lc') -Filter '*.h'
-    return Initialize-LcGch -Dir (Join-Path $script:LcDsaRoot "build\pch\$Flavor") -Name 'lc-all.h' `
+    return Initialize-LcGch -Dir (Join-Path (Get-LcBuildRoot) "pch\$Flavor") -Name 'lc-all.h' `
         -Text ((Get-LcInclude 'lc-prelude.h') + (Get-LcInclude 'lc.h')) `
         -Flags (Get-LcCompileFlags (Get-LcFlavorFlags $Flavor)) -Deps $deps
 }
 
-# The user PCH: build/pch/<flavor>-user/lc-prelude.h (prelude only), rebuilt when lc/lc-prelude.h changes.
+# The user PCH: <build root>/pch/<flavor>-user/lc-prelude.h (prelude only), rebuilt when lc/lc-prelude.h changes.
 function Initialize-LcUserPch {
     param([Parameter(Mandatory)][ValidateSet('test', 'debug', 'bench', 'profile')][string]$Flavor)
     $deps = Get-Item -LiteralPath (Join-Path $script:LcDsaRoot 'lc\lc-prelude.h')
-    return Initialize-LcGch -Dir (Join-Path $script:LcDsaRoot "build\pch\$Flavor-user") -Name 'lc-prelude.h' `
+    return Initialize-LcGch -Dir (Join-Path (Get-LcBuildRoot) "pch\$Flavor-user") -Name 'lc-prelude.h' `
         -Text (Get-LcInclude 'lc-prelude.h') `
         -Flags (@(Get-LcCompileFlags (Get-LcFlavorFlags $Flavor)) + @(Get-LcUserFlags $Flavor)) -Deps $deps
 }
@@ -123,7 +129,7 @@ function Wait-LcGpp($job) {
     return @{ Ok = $ok; Text = $text.TrimEnd() }
 }
 
-# Builds build/lc/<slug>-<hash>/<Name>.exe (Name defaults to the flavor) from the harness and user texts.
+# Builds <build root>/lc/<slug>-<hash>/<Name>.exe (Name defaults to the flavor) from the harness and user texts.
 # Each object is compiled only when its stamp changed (harness: text + flags + lc-all.h.gch time;
 # user: text + solution + flags + lc-prelude.h.gch time); the exe is relinked when either object changed.
 # Returns @{ Ok; Exe; Ms; Skipped; Errors; Stage }. On failure Errors is g++'s output (warnings included)

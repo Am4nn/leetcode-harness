@@ -95,6 +95,58 @@ function ConvertTo-LcTypeText([string]$type) {
     return $type -replace '\s*([<>,*])\s*', '$1'
 }
 
+# Simple type aliases in the (comment-free) solution text, name -> type text (case-sensitive):
+# `using X = T;` (not alias templates), `typedef T X;` and object-like `#define X T`.
+function Get-LcTypeAliases([string]$text) {
+    $aliases = New-Object 'Collections.Generic.Dictionary[string,string]'
+    foreach ($m in [regex]::Matches($text, '(template\s*<[^;{}]*?>\s*)?\busing\s+(\w+)\s*=\s*([^;{}]+);')) {
+        if (-not $m.Groups[1].Success) { $aliases[$m.Groups[2].Value] = $m.Groups[3].Value }
+    }
+    foreach ($m in [regex]::Matches($text, '\btypedef\s+([^;{}()]+?)\s+(\w+)\s*;')) {
+        $aliases[$m.Groups[2].Value] = $m.Groups[1].Value
+    }
+    foreach ($m in [regex]::Matches($text, '(?m)^[ \t]*#[ \t]*define[ \t]+(\w+)[ \t]+([\w \t<>,:*&]+?)[ \t]*\r?$')) {
+        $aliases[$m.Groups[1].Value] = $m.Groups[2].Value
+    }
+    return $aliases
+}
+
+# Substitutes aliases into a type (repeatedly, for aliases of aliases), then normalizes it.
+function Resolve-LcTypeAliases([string]$type, $aliases) {
+    for ($n = 0; $n -lt 10 -and $aliases.Count; $n++) {
+        $before = $type
+        foreach ($k in $aliases.Keys) {
+            $type = [regex]::Replace($type, '(?<![\w:])' + [regex]::Escape($k) + '(?!\w)', $aliases[$k].Replace('$', '$$'))
+        }
+        if ($type -ceq $before) { break }
+    }
+    return ConvertTo-LcTypeText $type
+}
+
+# For source-derived info: a line explaining why the harness TU can't compile its types (an identifier
+# that isn't a C++ builtin, a std name, TreeNode or ListNode; or an auto return type), else $null.
+function Get-LcSourceTypeProblem($Info, [string]$SrcText) {
+    $known = @(
+        'void', 'bool', 'char', 'wchar_t', 'char8_t', 'char16_t', 'char32_t', 'short', 'int', 'long', 'signed', 'unsigned',
+        'float', 'double', '__int128', 'size_t', 'ptrdiff_t', 'int8_t', 'int16_t', 'int32_t', 'int64_t', 'uint8_t',
+        'uint16_t', 'uint32_t', 'uint64_t', 'intmax_t', 'uintmax_t', 'string', 'wstring', 'u16string', 'u32string',
+        'string_view', 'vector', 'array', 'deque', 'list', 'forward_list', 'map', 'multimap', 'set', 'multiset',
+        'unordered_map', 'unordered_multimap', 'unordered_set', 'unordered_multiset', 'pair', 'tuple', 'optional',
+        'variant', 'bitset', 'stack', 'queue', 'priority_queue', 'function', 'less', 'greater', 'hash', 'complex',
+        'valarray', 'span', 'any', 'TreeNode', 'ListNode')
+    foreach ($t in @($Info.ReturnType) + @($Info.ParamTypes)) {
+        foreach ($m in [regex]::Matches(($t -replace '\bstd::', ''), '[A-Za-z_]\w*')) {
+            $w = $m.Value
+            if ($known -ccontains $w) { continue }
+            if ($SrcText -cmatch "\b(struct|class|enum|union)\s+$w\b") {
+                return "This problem uses a parameter type the harness doesn't support yet: $w"
+            }
+            return "Spell the full type in the method signature (found: $w)."
+        }
+    }
+    return $null
+}
+
 function Get-LcInfoFromSource([string]$srcText) {
     $text = $srcText -replace '(?s)/\*.*?\*/', ' ' -replace '//[^\r\n]*', ' '
     $mt = [regex]::Match($text, '\bclass\s+Solution\b[^{;]*\{')
@@ -113,6 +165,7 @@ function Get-LcInfoFromSource([string]$srcText) {
         }
         if ($depth -eq 0) { [void]$flat.Append($c) }
     }
+    $aliases = Get-LcTypeAliases $text
     $public = $false
     $methods = @()
     foreach ($chunk in ($flat.ToString() -split '[;}]')) {
@@ -125,9 +178,12 @@ function Get-LcInfoFromSource([string]$srcText) {
         if (-not $dm.Success) { continue }
         $ret = $dm.Groups[1].Value.Trim()
         $nm = $dm.Groups[2].Value
-        if (-not $ret -or $nm -eq 'operator' -or $ret -match '^(using|typedef)\b') { continue }
+        # Skips constructors (no return type), the destructor (~Solution), operators and type aliases.
+        if (-not $ret -or $nm -eq 'operator' -or $ret.EndsWith('~') -or $ret -match '^(using|typedef)\b') { continue }
         $params = @(Split-LcTopLevel $dm.Groups[3].Value | ForEach-Object { ConvertTo-LcParam $_ } | Where-Object { $_ })
-        $retType = ConvertTo-LcTypeText ($ret -replace '\b(static|inline|virtual|constexpr)\b', '')
+        # The harness TU never sees the solution, so its aliases are spelled out.
+        foreach ($p in $params) { $p.Type = Resolve-LcTypeAliases $p.Type $aliases }
+        $retType = Resolve-LcTypeAliases ($ret -replace '\b(static|inline|virtual|constexpr)\b', '') $aliases
         # A void method's output: its first non-const reference parameter, else the first parameter.
         $out = -1
         if ($retType -eq 'void') {
@@ -192,46 +248,44 @@ function Join-LcArgs([string]$first, [string]$rest) {
 }
 
 # The harness TU (compiled with lc.h, cached per signature): hook declarations, the LcProxy class that
-# forwards to them, and main() running lc-run.h on LcProxy. ClassName (default Info.Class) is what
-# design cases call the class (ops[0]).
+# forwards to them, and main() running lc-run.h on LcProxy. LcProxy owns the solution object (a Solution,
+# or the design class), so the runner constructs it outside the timed call. ClassName (default
+# Info.Class) is what design cases call the class (ops[0]).
 function New-LcHarnessText {
     param([Parameter(Mandatory)]$Info, [string]$ClassName = '')
-    $lines = @()
-    $copy = @('    LcProxy(const LcProxy&) = delete;', '    LcProxy& operator=(const LcProxy&) = delete;')
-    if ($Info.Kind -eq 'design') {
+    $design = $Info.Kind -eq 'design'
+    if ($design) {
+        $ctorTypes = @($Info.CtorTypes)
+        $new = 'lc_user_new'; $delete = 'lc_user_delete'
+        $methods = @($Info.Methods | ForEach-Object { @{ Name = $_.Name; Hook = "lc_user_m_$($_.Name)"; Types = $_.ParamTypes; Ret = $_.ReturnType } })
+    } else {
+        $ctorTypes = @()
+        $new = 'lc_user_new_solution'; $delete = 'lc_user_delete_solution'
+        $methods = @(@{ Name = 'call'; Hook = 'lc_user_call'; Types = $Info.ParamTypes; Ret = $Info.ReturnType })
+    }
+    $lines = @("void* $new($(New-LcRefParams $ctorTypes));", "void $delete(void*);")
+    foreach ($m in $methods) { $lines += "$($m.Ret) $($m.Hook)($(Join-LcArgs 'void*' (New-LcRefParams $m.Types)));" }
+    $lines += 'struct LcProxy {'
+    $lines += '    void* lc_self_;'
+    $lines += "    LcProxy($(New-LcRefParams $ctorTypes 'c')) : lc_self_($new($(New-LcArgNames $ctorTypes.Count 'c'))) {}"
+    $lines += "    ~LcProxy() { $delete(lc_self_); }"
+    $lines += '    LcProxy(const LcProxy&) = delete;'
+    $lines += '    LcProxy& operator=(const LcProxy&) = delete;'
+    foreach ($m in $methods) {
+        $call = "$($m.Hook)($(Join-LcArgs 'lc_self_' (New-LcArgNames @($m.Types).Count 'a')))"
+        if ($m.Ret -ne 'void') { $call = "return $call" }
+        $lines += "    $($m.Ret) $($m.Name)($(New-LcRefParams $m.Types 'a')) { $call; }"
+    }
+    $lines += '};'
+    if ($design) {
         if (-not $ClassName) { $ClassName = $Info.Class }
-        $lines += "void* lc_user_new($(New-LcRefParams $Info.CtorTypes));"
-        $lines += 'void lc_user_delete(void*);'
-        foreach ($m in $Info.Methods) {
-            $lines += "$($m.ReturnType) lc_user_m_$($m.Name)($(Join-LcArgs 'void*' (New-LcRefParams $m.ParamTypes)));"
-        }
-        $lines += 'struct LcProxy {'
-        $lines += '    void* p;'
-        $lines += "    LcProxy($(New-LcRefParams $Info.CtorTypes 'c')) : p(lc_user_new($(New-LcArgNames @($Info.CtorTypes).Count 'c'))) {}"
-        $lines += '    ~LcProxy() { lc_user_delete(p); }'
-        $lines += $copy
-        foreach ($m in $Info.Methods) {
-            $call = "lc_user_m_$($m.Name)($(Join-LcArgs 'p' (New-LcArgNames @($m.ParamTypes).Count 'a')))"
-            if ($m.ReturnType -ne 'void') { $call = "return $call" }
-            $lines += "    $($m.ReturnType) $($m.Name)($(New-LcRefParams $m.ParamTypes 'a')) { $call; }"
-        }
-        $lines += '};'
         $lines += 'namespace lc { template <> struct DesignName<LcProxy> { static std::string get() { return "' + $ClassName + '"; } }; }'
-        $targs = (@('LcProxy') + @($Info.CtorTypes)) -join ', '
+        $targs = (@('LcProxy') + $ctorTypes) -join ', '
         $ms = @($Info.Methods | ForEach-Object {
             '{"' + $_.Name + '", lc::method(&LcProxy::' + $_.Name + ', ' + (New-LcNameList $_.ParamNames) + ')}'
         }) -join ', '
         $lines += "int main(int argc, char** argv) { return lc::run_design<$targs>(argc, argv, $(New-LcNameList $Info.CtorNames), {$ms}); }"
     } else {
-        $ret = $Info.ReturnType
-        $lines += "$ret lc_user_call($(New-LcRefParams $Info.ParamTypes));"
-        $call = "lc_user_call($(New-LcArgNames @($Info.ParamTypes).Count 'a'))"
-        if ($ret -ne 'void') { $call = "return $call" }
-        $lines += 'struct LcProxy {'
-        $lines += '    LcProxy() = default;'
-        $lines += $copy
-        $lines += "    $ret call($(New-LcRefParams $Info.ParamTypes 'a')) { $call; }"
-        $lines += '};'
         $lines += "int main(int argc, char** argv) { return lc::run_function(argc, argv, &LcProxy::call, $(New-LcNameList $Info.ParamNames), $($Info.OutParam)); }"
     }
     return ($lines -join "`n") + "`n"
@@ -243,17 +297,21 @@ function New-LcUserText {
     $lines = @('#include "' + ($SrcPath -replace '\\', '/') + '"')
     if ($Info.Kind -eq 'design') {
         $cls = $Info.Class
-        $lines += "void* lc_user_new($(New-LcRefParams $Info.CtorTypes 'c')) { return new $cls($(New-LcArgNames @($Info.CtorTypes).Count 'c')); }"
-        $lines += "void lc_user_delete(void* p) { delete static_cast<$cls*>(p); }"
-        foreach ($m in $Info.Methods) {
-            $call = "static_cast<$cls*>(p)->$($m.Name)($(New-LcArgNames @($m.ParamTypes).Count 'a'))"
-            if ($m.ReturnType -ne 'void') { $call = "return $call" }
-            $lines += "$($m.ReturnType) lc_user_m_$($m.Name)($(Join-LcArgs 'void* p' (New-LcRefParams $m.ParamTypes 'a'))) { $call; }"
-        }
+        $ctorTypes = @($Info.CtorTypes)
+        $lines += "void* lc_user_new($(New-LcRefParams $ctorTypes 'c')) { return new $cls($(New-LcArgNames $ctorTypes.Count 'c')); }"
+        $lines += "void lc_user_delete(void* lc_self) { delete static_cast<$cls*>(lc_self); }"
+        $methods = @($Info.Methods | ForEach-Object { @{ Name = $_.Name; Hook = "lc_user_m_$($_.Name)"; Types = $_.ParamTypes; Ret = $_.ReturnType } })
     } else {
-        $call = "lc_sol.$($Info.Method)($(New-LcArgNames @($Info.ParamTypes).Count 'a'))"
-        if ($Info.ReturnType -ne 'void') { $call = "return $call" }
-        $lines += "$($Info.ReturnType) lc_user_call($(New-LcRefParams $Info.ParamTypes 'a')) { Solution lc_sol; $call; }"
+        $cls = 'Solution'
+        # Default-initialized, like a local `Solution s;`.
+        $lines += 'void* lc_user_new_solution() { return new Solution; }'
+        $lines += 'void lc_user_delete_solution(void* lc_self) { delete static_cast<Solution*>(lc_self); }'
+        $methods = @(@{ Name = $Info.Method; Hook = 'lc_user_call'; Types = $Info.ParamTypes; Ret = $Info.ReturnType })
+    }
+    foreach ($m in $methods) {
+        $call = "static_cast<$cls*>(lc_self)->$($m.Name)($(New-LcArgNames @($m.Types).Count 'a'))"
+        if ($m.Ret -ne 'void') { $call = "return $call" }
+        $lines += "$($m.Ret) $($m.Hook)($(Join-LcArgs 'void* lc_self' (New-LcRefParams $m.Types 'a'))) { $call; }"
     }
     return ($lines -join "`n") + "`n"
 }

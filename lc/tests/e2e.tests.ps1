@@ -11,6 +11,12 @@
     . (Join-Path $repo '.zed\common.ps1')
     . (Join-Path $repo '.zed\lc\info.ps1')
     . (Join-Path $repo '.zed\lc\build.ps1')
+    # R27: builds go to a build root of their own, so self-tests never touch the user's build/ caches.
+    $oldBuildRoot = $env:LC_BUILD_ROOT
+    $env:LC_BUILD_ROOT = Join-Path $env:TEMP 'lc-e2e-build'
+    $userGch = Join-Path $repo 'build\pch\test\lc-all.h.gch'
+    $userGchTime = $null
+    if (Test-Path -LiteralPath $userGch) { $userGchTime = (Get-Item -LiteralPath $userGch).LastWriteTimeUtc }
 
     function Invoke-Lc([string]$File, [string[]]$Extra = @(), [string]$Stdin = '') {
         $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -51,7 +57,7 @@
 
         # e2e: rerun skips compile
         $twoSumDir = Get-LcBuildDir $twoSum
-        Assert-Match $twoSumDir '\\build\\lc\\two-sum-[0-9a-f]{8}$'
+        Assert-Match $twoSumDir '\\lc-e2e-build\\lc\\two-sum-[0-9a-f]{8}$'
         $exe = Join-Path $twoSumDir 'test.exe'
         $mtime = (Get-Item -LiteralPath $exe).LastWriteTimeUtc
         $r = Invoke-Lc $twoSum
@@ -72,9 +78,16 @@
         Assert-Equal ([IO.File]::ReadAllText((Join-Path $twoSumDir 'test-harness.stamp'))) $harnessStamp
         Assert-True ($after[2] -gt $before[2]) 'e2e: an edit must rebuild the user object'
 
-        # e2e: touching lc/lc.h rebuilds the harness
-        (Get-Item -LiteralPath (Join-Path $repo 'lc\lc.h')).LastWriteTimeUtc = [DateTime]::UtcNow
-        $r = Invoke-Lc $twoSum
+        # e2e: touching lc/lc.h rebuilds the harness (the original mtime is restored, so the user's own
+        # PCH, built after it, stays valid)
+        $lcH = Get-Item -LiteralPath (Join-Path $repo 'lc\lc.h')
+        $lcHTime = $lcH.LastWriteTimeUtc
+        try {
+            $lcH.LastWriteTimeUtc = [DateTime]::UtcNow
+            $r = Invoke-Lc $twoSum
+        } finally {
+            $lcH.LastWriteTimeUtc = $lcHTime
+        }
         Assert-Equal $r.Code 0 "e2e: two-sum after touching lc.h`n$($r.Out)"
         Assert-True ((& $mtimes)[0] -gt $after[0]) 'e2e: touching lc.h must rebuild the harness object'
 
@@ -164,6 +177,22 @@
         Assert-True $r.Out.Contains("This problem uses a parameter type the harness doesn't support yet: Node") "e2e: own type`n$($r.Out)"
         Assert-Equal $r.Code 1 'e2e: own type exit code'
 
+        # e2e: aliases in a source-only signature are spelled out for the harness (R24)
+        [IO.File]::WriteAllText((Join-Path $tmp 'odd\aliases.cpp'), ("#define VI vector<int>`nusing ll = long long;`ntypedef vector<ll> vll;`n" +
+            "class Solution {`npublic:`n    ll total(vll& a, VI& b) {`n        ll s = 0;`n        for (ll x : a) s += x;`n" +
+            "        for (int x : b) s += x;`n        return s;`n    }`n};`n"), $utf8)
+        [IO.File]::WriteAllText((Join-Path $tmp 'odd\tests\aliases.txt'), "Input: a = [1,2,3], b = [4]`nOutput: 10`n", $utf8)
+        $r = Invoke-Lc (Join-Path $tmp 'odd\aliases.cpp')
+        Assert-Equal $r.Code 0 "e2e: aliases`n$($r.Out)"
+        Assert-Match $r.Out '1/1 passed'
+
+        # e2e: an auto return type gets one line, not a compile
+        [IO.File]::WriteAllText((Join-Path $tmp 'odd\auto-ret.cpp'), "class Solution {`npublic:`n    auto f(int a) { return a; }`n};`n", $utf8)
+        $r = Invoke-Lc (Join-Path $tmp 'odd\auto-ret.cpp')
+        $outLines = @($r.Out.Trim() -split '\r?\n')
+        Assert-Equal ($outLines -join '|') 'auto-ret|Spell the full type in the method signature (found: auto).' "e2e: auto return`n$($r.Out)"
+        Assert-Equal $r.Code 1 'e2e: auto return exit code'
+
         # e2e: a class Solution without a public method is not taken for a design problem
         [IO.File]::WriteAllText((Join-Path $tmp 'odd\private-only.cpp'), "class Solution {`n    int f(int a) { return a; }`n};`n", $utf8)
         $r = Invoke-Lc (Join-Path $tmp 'odd\private-only.cpp')
@@ -176,7 +205,13 @@
         $r = Invoke-Lc (Join-Path $tmp 'concatenation-of-array.cpp')
         Assert-Match $r.Out '(?m)^\s+----\s+3\s+\[1,2,3[0-9,]*\.\.\.\s'
         Assert-True ($r.Out -notmatch '40\]') "e2e: ---- line not truncated`n$($r.Out)"
+
+        # e2e: the user's own build cache was left alone
+        if ($null -ne $userGchTime) {
+            Assert-Equal (Get-Item -LiteralPath $userGch).LastWriteTimeUtc $userGchTime 'e2e: touched the user build/pch'
+        }
     } finally {
+        $env:LC_BUILD_ROOT = $oldBuildRoot
         Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
     }
 }
