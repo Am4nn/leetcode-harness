@@ -31,6 +31,7 @@ foreach ($f in Get-ChildItem (Join-Path $PSScriptRoot '*.test.cpp') | Sort-Objec
     $exe = Join-Path $buildDir "$name.test.exe"
     $out = & $gpp @flags -I $lc -include (Join-Path $lc 'lc-prelude.h') $f.FullName -o $exe 2>&1 | ForEach-Object { "$_" } | Out-String
     if ($LASTEXITCODE -ne 0) { Report $name $false $out; continue }
+    if ($out -match 'warning:') { Report $name $false "compiler warnings:`n$out"; continue }
     $out = & $exe 2>&1 | ForEach-Object { "$_" } | Out-String
     Report $name ($LASTEXITCODE -eq 0) "$out(exit code $LASTEXITCODE)"
 }

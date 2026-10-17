@@ -5,6 +5,9 @@
 #include <bits/stdc++.h>
 using namespace std;
 
+// LeetCode's exact definitions; their constructor parameters shadow members, so silence -Wshadow here only.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshadow"
 struct TreeNode {
     int val;
     TreeNode *left;
@@ -21,5 +24,6 @@ struct ListNode {
     ListNode(int x) : val(x), next(nullptr) {}
     ListNode(int x, ListNode *next) : val(x), next(next) {}
 };
+#pragma GCC diagnostic pop
 
 #endif
