@@ -242,6 +242,201 @@ int run_function(int argc, char** argv, R (S::*method)(A...) const, std::vector<
     return detail::run_function_impl<S, R, decltype(method), A...>(argc, argv, method, param_names, out_param);
 }
 
+// ---- design problems ----
+
+namespace detail {
+
+// A problem with one call's arguments; the runner adds the "call N (name): " prefix.
+struct CallError : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+// Parses `texts` into a tuple of the (decayed) parameter types, checking the count first.
+template <class Tuple> Tuple parse_args(const std::vector<std::string>& texts, const std::vector<std::string>& names) {
+    constexpr size_t N = std::tuple_size_v<Tuple>;
+    auto name = [&](size_t i) { return i < names.size() ? names[i] : "argument " + std::to_string(i + 1); };
+    if (texts.size() != N) {
+        std::string list;
+        for (size_t i = 0; i < N; ++i) list += (i ? ", " : " (") + name(i);
+        if (N) list += ")";
+        throw CallError("expected " + std::to_string(N) + (N == 1 ? " argument" : " arguments") + list + ", got " +
+                        std::to_string(texts.size()));
+    }
+    return [&]<size_t... I>(std::index_sequence<I...>) {
+        auto one = [&]<size_t J>(std::integral_constant<size_t, J>) {
+            try {
+                return parse<std::tuple_element_t<J, Tuple>>(texts[J]);
+            } catch (const ParseError& e) {
+                throw CallError("can't read " + name(J) + ": " + e.what());
+            }
+        };
+        return Tuple{one(std::integral_constant<size_t, I>{})...};
+    }(std::make_index_sequence<N>{});
+}
+
+}  // namespace detail
+
+template <class C> struct Method {
+    std::vector<std::string> names;
+    // Returns show(result), or "null" for void.
+    std::function<std::string(C&, const std::vector<std::string>& args)> call;
+    // Parses both texts into the return type and compares them.
+    std::function<bool(const std::string& got, const std::string& want)> same;
+};
+
+namespace detail {
+
+template <class C, class R, class M, class... A> Method<C> make_method(M m, std::vector<std::string> names) {
+    Method<C> mt;
+    mt.names = names;
+    mt.call = [m, names](C& obj, const std::vector<std::string>& texts) -> std::string {
+        using Args = std::tuple<std::remove_cvref_t<A>...>;
+        Args args = parse_args<Args>(texts, names);
+        auto invoke = [&]<size_t... I>(std::index_sequence<I...>) -> decltype(auto) {
+// GCC false positive: on an empty class it flags the (dead) virtual-call branch of a member pointer call.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+            return (obj.*m)(std::get<I>(args)...);
+#pragma GCC diagnostic pop
+        };
+        if constexpr (std::is_void_v<R>) {
+            invoke(std::index_sequence_for<A...>{});
+            return "null";
+        } else {
+            return show<std::remove_cvref_t<R>>(invoke(std::index_sequence_for<A...>{}));
+        }
+    };
+    mt.same = [](const std::string& got, const std::string& want) {
+        if constexpr (std::is_void_v<R>) {
+            return got == want;
+        } else {
+            using T = std::remove_cvref_t<R>;
+            return equal(parse<T>(got), parse<T>(want), false);
+        }
+    };
+    return mt;
+}
+
+}  // namespace detail
+
+template <class C, class R, class... A> Method<C> method(R (C::*m)(A...), std::vector<std::string> names) {
+    return detail::make_method<C, R, decltype(m), A...>(m, std::move(names));
+}
+
+template <class C, class R, class... A> Method<C> method(R (C::*m)(A...) const, std::vector<std::string> names) {
+    return detail::make_method<C, R, decltype(m), A...>(m, std::move(names));
+}
+
+template <class C, class... CtorA>
+int run_design(int argc, char** argv, std::vector<std::string> ctor_names, std::map<std::string, Method<C>> methods) {
+    detail::TestCli cli;
+    if (int code = detail::parse_test_cli(argc, argv, cli)) return code;
+    std::vector<Case> cases;
+    try {
+        cases = read_cases(cli.cases);
+    } catch (const std::exception& e) {
+        std::cerr << e.what() << '\n';
+        return 2;
+    }
+    std::ofstream out(cli.results, std::ios::binary);
+    if (!out) {
+        std::cerr << "can't write results file " << cli.results << '\n';
+        return 2;
+    }
+
+    using namespace detail;
+    for (const Case& c : cases) {
+        write_start(out, c.n);
+        Result r;
+        r.n = c.n;
+        r.status = "error";
+
+        std::vector<std::string> ops, calls, wants;
+        try {
+            ops = parse<std::vector<std::string>>(c.ops);
+            calls = split_top_level(c.design_args);
+            if (c.expect) wants = split_top_level(*c.expect);
+        } catch (const ParseError& e) {
+            r.error = std::string("can't read ops/args/expect: ") + e.what();
+            write_result(out, r);
+            continue;
+        }
+        if (ops.empty()) { r.error = "ops is empty"; write_result(out, r); continue; }
+        if (ops.size() != calls.size()) {
+            r.error = "ops has " + std::to_string(ops.size()) + " entries but args has " + std::to_string(calls.size());
+            write_result(out, r);
+            continue;
+        }
+        if (c.expect && wants.size() != ops.size()) {
+            r.error = "expect has " + std::to_string(wants.size()) + " entries but ops has " + std::to_string(ops.size());
+            write_result(out, r);
+            continue;
+        }
+        for (size_t k = 1; k < ops.size() && r.error.empty(); ++k)
+            if (!methods.count(ops[k])) r.error = "unknown method " + ops[k];
+        if (!r.error.empty()) { write_result(out, r); continue; }
+
+        std::vector<std::string> gots;
+        size_t i = 0;
+        auto where = [&] { return "call " + std::to_string(i + 1) + " (" + ops[i] + ")"; };
+        auto split_args = [](const std::string& text) {
+            try {
+                return split_top_level(text);
+            } catch (const ParseError& e) {
+                throw CallError(std::string("can't read args: ") + e.what());
+            }
+        };
+        try {
+            using CtorArgs = std::tuple<std::remove_cvref_t<CtorA>...>;
+            CtorArgs ct = parse_args<CtorArgs>(split_args(calls[0]), ctor_names);
+            auto t0 = std::chrono::steady_clock::now();
+            std::unique_ptr<C> obj = std::apply([](auto&... a) { return std::make_unique<C>(a...); }, ct);
+            gots.push_back("null");
+            for (i = 1; i < ops.size(); ++i) gots.push_back(methods.at(ops[i]).call(*obj, split_args(calls[i])));
+            r.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        } catch (const CallError& e) {
+            r.error = where() + ": " + e.what();
+            write_result(out, r);
+            continue;
+        } catch (const std::exception& e) {
+            r.error = std::string("exception: ") + e.what();
+            write_result(out, r);
+            continue;
+        } catch (...) {
+            r.error = "exception: unknown";
+            write_result(out, r);
+            continue;
+        }
+
+        auto join = [](const std::vector<std::string>& v) {
+            std::string s = "[";
+            for (size_t k = 0; k < v.size(); ++k) s += (k ? "," : "") + v[k];
+            return s + "]";
+        };
+        r.got = join(gots);
+        if (!c.expect) { r.status = "print"; write_result(out, r); continue; }
+        r.expected = join(wants);
+        r.status = "pass";
+        for (i = 1; i < ops.size() && r.status == "pass"; ++i) {
+            bool same;
+            try {
+                same = (gots[i] == "null" || wants[i] == "null") ? gots[i] == wants[i]
+                                                                   : methods.at(ops[i]).same(gots[i], wants[i]);
+            } catch (const ParseError& e) {
+                r.status = "error";
+                r.error = std::string("can't read expected for ") + where() + ": " + e.what();
+                break;
+            }
+            if (!same) {
+                r.status = "fail";
+                r.diff = where() + ": got " + gots[i] + ", expected " + wants[i];
+            }
+        }
+        write_result(out, r);
+    }
+    return 0;
+}
+
 }  // namespace lc
 
 #endif
