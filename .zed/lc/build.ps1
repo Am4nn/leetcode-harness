@@ -25,11 +25,13 @@ function Get-LcFlavorFlags([string]$Flavor) {
 }
 
 # Extra compile flags for the user translation unit (and its PCH) only. Profile: only the user's own
-# functions call lc-prof.h's hooks; the STL and the prelude (TreeNode/ListNode) are excluded by file, the
-# generated lc_user_* hooks by name. (The solution may itself sit under a /lc/ or /build/ folder.)
+# functions call lc-prof.h's hooks. Excluded by file: only the toolchain's headers (GCC canonicalizes
+# their paths to C:/msys64/ucrt64/include/... and .../ucrt64/lib/gcc/...) and the prelude (TreeNode/ListNode),
+# so a solution under any folder (lc/, build/, include/) is still counted (R39); by name: the generated
+# lc_user_* hooks.
 function Get-LcUserFlags([string]$Flavor) {
     if ($Flavor -eq 'profile') {
-        return @('-finstrument-functions', '-finstrument-functions-exclude-file-list=include/,lc-prelude.h',
+        return @('-finstrument-functions', '-finstrument-functions-exclude-file-list=ucrt64/include/,ucrt64/lib/gcc/,lc-prelude.h',
                  '-finstrument-functions-exclude-function-list=lc_user_')
     }
     return @()

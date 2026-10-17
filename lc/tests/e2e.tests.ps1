@@ -334,17 +334,23 @@
         $r = Invoke-Lc $twoSum -Mode analyze
         Assert-Equal $r.Code 0 "e2e: analyze two-sum exit code`n$($r.Out)"
         $outLines = @($r.Out.TrimEnd() -split '\r?\n')
-        Assert-Equal $outLines.Count 5 "e2e: analyze output lines`n$($r.Out)"
+        Assert-Equal $outLines.Count 4 "e2e: analyze output lines`n$($r.Out)"
         Assert-Match $outLines[0] '^Complexity: looks O\(n( log n)?\) \(random inputs; worst case may differ\)$'
         Assert-Match $outLines[1] '^  n=\d+ [0-9.]+ ms( \| n=\d+ [0-9.]+ m?s)+$'
         Assert-Match $outLines[2] '^At n = 10000: est\. [0-9.]+ ms -> ok$'
         Assert-Match $outLines[3] '^Allocations at n=10000: \d+ allocs, [0-9.]+ [KM]?B total, peak [0-9.]+ [KM]?B$'
-        Assert-Match $outLines[4] '^Calls \(n=\d+\): twoSum: 1 call, max depth 1$'
+        # R40: no Calls line when every function ran once; the event still has the counts
+        $a = @(Read-LcEvents $journey | Where-Object { $_.event -eq 'analyze_run' })[-1]
+        Assert-True ($a.calls.twoSum.count -eq 1 -and $a.calls.twoSum.depth -eq 1) "e2e: two-sum analyze_run calls $($a | ConvertTo-Json -Compress)"
         $r = Invoke-Lc (Join-Path $tmp 'climbing-stairs.cpp') -Mode analyze
         Assert-Match $r.Out 'looks O\(2\^n\)'
         Assert-Match $r.Out '(?m)^Allocations at n=45: none\s*$'
-        # Task 12: call counts and recursion depth (profile build) at the largest size timed under 200 ms
-        Assert-Match $r.Out '(?m)^Calls \(n=\d+\): climbStairs: [0-9,]+ calls, max depth \d+\s*$'
+        # Task 12: call counts and recursion depth (profile build) at the largest size timed under 20 ms (R38)
+        Assert-True ($r.Out -match '(?m)^Calls \(n=(\d+)\): climbStairs: [0-9,]+ calls, max depth \d+\s*$') "e2e: climbing-stairs Calls line`n$($r.Out)"
+        $callsN = [long]$Matches[1]
+        $under = @([regex]::Matches($r.Out, 'n=(\d+) ([0-9.]+) ms') |
+            Where-Object { [double]::Parse($_.Groups[2].Value, [Globalization.CultureInfo]::InvariantCulture) -lt 20 } | ForEach-Object { [long]$_.Groups[1].Value })
+        Assert-Equal $callsN ($under | Measure-Object -Maximum).Maximum "e2e: Calls n is the largest size under 20 ms`n$($r.Out)"
         $a = @(Read-LcEvents $journey | Where-Object { $_.event -eq 'analyze_run' })[-1]
         Assert-True ($a.calls.climbStairs.count -gt 1000 -and $a.calls.climbStairs.depth -gt 10) "e2e: analyze_run calls $($a | ConvertTo-Json -Compress)"
         $r = Invoke-Lc (Join-Path $tmp 'lru-cache.cpp') -Mode analyze

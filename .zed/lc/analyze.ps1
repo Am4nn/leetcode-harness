@@ -302,11 +302,11 @@ function Get-LcShortName([string]$Name) {
 }
 
 # The analyze line for the profiled functions (Resolve-LcProfile order): at most 3, and functions called
-# once (the entry point, a constructor) only when nothing was called more often.
+# once (the entry point, a constructor) left out. '' when every function ran once (R40: nothing to say).
 function Format-LcCallsLine([long]$N, $Profile) {
     $inv = [Globalization.CultureInfo]::InvariantCulture
-    $list = @($Profile)
-    if (@($list | Where-Object { $_.Calls -gt 1 }).Count) { $list = @($list | Where-Object { $_.Calls -gt 1 }) }
+    $list = @(@($Profile) | Where-Object { $_.Calls -gt 1 })
+    if (-not $list.Count) { return '' }
     $items = @($list | Select-Object -First 3 | ForEach-Object {
         $word = if ($_.Calls -eq 1) { 'call' } else { 'calls' }
         "$(Get-LcShortName $_.Name): $(([long]$_.Calls).ToString('N0', $inv)) $word, max depth $($_.Depth)"
@@ -316,12 +316,15 @@ function Format-LcCallsLine([long]$N, $Profile) {
 
 # Profile results lines ({"fn":"0x<hex>","calls":C,"depth":D}) -> @(@{ Name; Calls; Depth }), names from
 # nm's symbols for the exe (linked with --disable-dynamicbase, so they match the runtime addresses).
-# Most calls first, top 5. An address nm doesn't know keeps its hex form.
+# Most calls first, top 5. An address nm doesn't know keeps its hex form. A run that threw (an error
+# line) returns nothing: its counts stop mid-call (R41).
 function Resolve-LcProfile([string]$Exe, [string[]]$Lines) {
     $want = @{}
     foreach ($line in @($Lines)) {
-        if (-not $line -or $line -notmatch '"fn"') { continue }
+        if (-not $line) { continue }
         try { $o = $line | ConvertFrom-Json } catch { continue }
+        if ($o.status -eq 'error') { return @() }
+        if ($null -eq $o.fn) { continue }
         $key = ([Convert]::ToUInt64(([string]$o.fn).Substring(2), 16)).ToString('x16')
         $want[$key] = @{ Name = [string]$o.fn; Calls = [long]$o.calls; Depth = [long]$o.depth }
     }

@@ -123,7 +123,11 @@
     $many = @(@{ Name = 'Solution::a(int)'; Calls = 9; Depth = 3 }, @{ Name = 'Solution::b()'; Calls = 1; Depth = 1 },
         @{ Name = 'Solution::c(int)'; Calls = 5; Depth = 1 }, @{ Name = 'Solution::d(int)'; Calls = 4; Depth = 2 })
     Assert-Equal (Format-LcCallsLine -N 8 -Profile $many) 'Calls (n=8): a: 9 calls, max depth 3; c: 5 calls, max depth 1; d: 4 calls, max depth 2'
-    Assert-Equal (Format-LcCallsLine -N 8 -Profile @(@{ Name = 'Solution::twoSum(int)'; Calls = 1; Depth = 1 })) 'Calls (n=8): twoSum: 1 call, max depth 1'
+    Assert-Equal (Format-LcCallsLine -N 8 -Profile @(@{ Name = 'Solution::f(int)'; Calls = 1; Depth = 1 }, @{ Name = 'Solution::g(int)'; Calls = 2; Depth = 1 })) 'Calls (n=8): g: 2 calls, max depth 1'
+    # R40: nothing to say when every function ran once (a non-recursive solution).
+    Assert-Equal (Format-LcCallsLine -N 8 -Profile @(@{ Name = 'Solution::twoSum(int)'; Calls = 1; Depth = 1 }, @{ Name = 'Solution::Solution()'; Calls = 1; Depth = 1 })) ''
+    # R41: a profile run that threw resolves to nothing, so no partial line is printed.
+    Assert-Equal @(Resolve-LcProfile -Exe 'unused.exe' -Lines @('{"status":"error","error":"exception: boom"}', '{"fn":"0x140001000","calls":7,"depth":3}')).Count 0
 
     # Call counts and recursion depth from the profile build: n=20 is 2*fib(21)-1 calls, depth 20 (R7 fixture).
     # Only the user's own functions are counted (no lc_user_* hooks, no STL).
@@ -147,6 +151,27 @@
         Assert-Equal (@($p | ForEach-Object { $_.Name }) -join ',') 'Solution::climbStairs(int)' 'profiled functions'
         Assert-Equal $p[0].Calls 21891
         Assert-Equal $p[0].Depth 20
+
+        # R39: only toolchain headers are excluded, so a solution under an include\ folder is still counted,
+        # and an STL-heavy solution counts only its own function.
+        $profile = {
+            param($SrcPath, $MetaJson, $SpecText, [long]$N)
+            $i = Get-LcInfoFromMeta $MetaJson
+            $b = Build-LcExe -SrcPath $SrcPath -HarnessText (New-LcHarnessText -Info $i) -UserText (New-LcUserText -SrcPath $SrcPath -Info $i) -Flavor profile
+            Assert-True $b.Ok "profile build $SrcPath`n$($b.Errors)"
+            $d = Split-Path -Parent $b.Exe
+            [IO.File]::WriteAllText("$d\profile-spec.txt", $SpecText, (New-Object Text.UTF8Encoding $false))
+            Remove-Item -LiteralPath "$d\profile-results.txt" -ErrorAction SilentlyContinue
+            & $b.Exe profile "$d\profile-spec.txt" "$d\profile-results.txt" --n $N --seed 1
+            return @(Resolve-LcProfile -Exe $b.Exe -Lines ([IO.File]::ReadAllLines("$d\profile-results.txt")))
+        }
+        $incDir = Join-Path $env:LC_BUILD_ROOT 'include'
+        New-Item -ItemType Directory -Force $incDir | Out-Null
+        Copy-Item -LiteralPath $src -Destination $incDir -Force
+        $p = & $profile (Join-Path $incDir 'climbing-stairs.cpp') '{"name":"climbStairs","params":[{"name":"n","type":"integer"}],"return":{"type":"integer"}}' "size n`nparam n val 1 45`n" 20
+        Assert-Equal (@($p | ForEach-Object { "$($_.Name)|$($_.Calls)|$($_.Depth)" }) -join ',') 'Solution::climbStairs(int)|21891|20' 'solution under include\'
+        $p = & $profile (Join-Path $repo 'lc\selftest\two-sum.cpp') '{"name":"twoSum","params":[{"name":"nums","type":"integer[]"},{"name":"target","type":"integer"}],"return":{"type":"integer[]","size":2}}' "size nums`nparam nums len 2 1000 val -1000 1000`nparam target val -2000 2000`n" 1000
+        Assert-Equal (@($p | ForEach-Object { "$($_.Name)|$($_.Calls)|$($_.Depth)" }) -join ',') 'Solution::twoSum(std::vector<int, std::allocator<int> >&, int)|1|1' 'STL excluded'
     } finally {
         $env:LC_BUILD_ROOT = $oldBuildRoot
     }

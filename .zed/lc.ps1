@@ -303,11 +303,13 @@ if ($Mode -eq 'analyze') {
             Write-Host "Allocations at n=$($al.n): $($al.count) $word, $(Format-LcBytes $al.bytes) total, peak $(Format-LcBytes $al.peak)"
         }
     }
-    # Call counts and recursion depth: one input (same seed) at the largest size bench timed under 200 ms,
-    # on the profile build (only the user TU is instrumented). Silent when it can't be had.
+    # Call counts and recursion depth: one input (same seed) at the largest size bench timed under 20 ms
+    # (R38: instrumented runs are ~30x slower), else the smallest size, on the profile build (only the user
+    # TU is instrumented). Silent when it can't be had or when every function ran once (R40).
     $prof = @()
     $profN = $null
-    foreach ($p in $pts) { if (-not $p.capped -and $p.ms -lt 200) { $profN = $p.n } }
+    if ($pts.Count) { $profN = $pts[0].n }
+    foreach ($p in $pts) { if (-not $p.capped -and $p.ms -lt 20) { $profN = $p.n } }
     if ($profN) {
         $pb = Build-LcExe -SrcPath $src -HarnessText $harnessText -UserText $userText -Flavor profile
         $profPath = Join-Path $buildDir 'profile-results.txt'
@@ -319,7 +321,10 @@ if ($Mode -eq 'analyze') {
             }
         }
     }
-    if ($prof.Count) { Write-Host (Format-LcCallsLine -N $profN -Profile $prof) }
+    if ($prof.Count) {
+        $callsLine = Format-LcCallsLine -N $profN -Profile $prof
+        if ($callsLine) { Write-Host $callsLine }
+    }
     foreach ($a in $spec.Assumed) { Write-Host $a -ForegroundColor DarkGray }
 
     $data = [ordered]@{
