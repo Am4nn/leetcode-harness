@@ -8,27 +8,71 @@ function Get-LcNow { Get-Date -Format 'yyyy-MM-ddTHH:mm:sszzz' }
 function Get-LcSrcHash([string]$Path) {
     $sha = [Security.Cryptography.SHA256]::Create()
     try { $bytes = $sha.ComputeHash([IO.File]::ReadAllBytes($Path)) } finally { $sha.Dispose() }
-    return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '').Substring(0, 12)
+    return [BitConverter]::ToString($bytes, 0, 6).Replace('-', '').ToLowerInvariant()
 }
 
+# -PassThru returns the event as an object shaped like Read-LcEvents' (callers can keep a list in memory).
 function Write-LcEvent([string]$Root, [string]$Event, [string]$Slug, [string]$File, [string]$SrcHash,
-                       [hashtable]$Data = @{}, [string]$Ts = '') {
+                       [Collections.IDictionary]$Data = @{}, [string]$Ts = '', [switch]$PassThru) {
     if (-not $Ts) { $Ts = Get-LcNow }
     $o = [ordered]@{ ts = $Ts; event = $Event; slug = $Slug; file = $File; src_hash = $SrcHash }
     foreach ($k in $Data.Keys) { $o[$k] = $Data[$k] }
     $line = ($o | ConvertTo-Json -Compress -Depth 8) + "`n"
-    New-Item -ItemType Directory -Force $Root | Out-Null
-    [IO.File]::AppendAllText((Join-Path $Root 'events.jsonl'), $line, (New-LcUtf8))
+    if (-not [IO.Directory]::Exists($Root)) { New-Item -ItemType Directory -Force $Root | Out-Null }
+    $p = Join-Path $Root 'events.jsonl'
+    if ([IO.File]::Exists($p)) {
+        # A line cut short by a crash must not swallow this one.
+        $fs = [IO.File]::OpenRead($p)
+        try { if ($fs.Length -gt 0) { [void]$fs.Seek(-1, 'End'); if ($fs.ReadByte() -ne 10) { $line = "`n" + $line } } }
+        finally { $fs.Dispose() }
+    }
+    [IO.File]::AppendAllText($p, $line, (New-LcUtf8))
+    if ($PassThru) { return [pscustomobject]$o }
 }
 
-function Read-LcEvents([string]$Root) {
+# -Slug: only that slug's events. A plain text search picks its lines first, so a run's cost stays
+# small as the log grows. Parsing is one ConvertFrom-Json call; if any line is malformed (a write cut
+# short by a crash), it parses line by line and skips the bad ones.
+function Read-LcEvents([string]$Root, [string]$Slug = '') {
     $p = Join-Path $Root 'events.jsonl'
-    if (-not (Test-Path -LiteralPath $p)) { return @() }
-    $out = @()
-    foreach ($l in [IO.File]::ReadAllLines($p, (New-LcUtf8))) {
-        if ($l.Trim()) { $out += ($l | ConvertFrom-Json) }
+    if (-not [IO.File]::Exists($p)) { return @() }
+    $text = [IO.File]::ReadAllText($p, (New-LcUtf8))
+    if ($Slug) {
+        # The field as the writer encodes it (ConvertTo-Json only for names it would escape).
+        if ($Slug -match '^[A-Za-z0-9 ._-]+$') { $needle = '"slug":"' + $Slug + '",' }
+        else { $needle = '"slug":' + (ConvertTo-Json $Slug -Compress) + ',' }
+        $lines = New-Object Collections.Generic.List[string]
+        $i = $text.IndexOf($needle, [StringComparison]::Ordinal)
+        while ($i -ge 0) {
+            $start = $text.LastIndexOf("`n", $i) + 1
+            $end = $text.IndexOf("`n", $i)
+            if ($end -lt 0) { $end = $text.Length }
+            $lines.Add($text.Substring($start, $end - $start).Trim())
+            $i = $text.IndexOf($needle, $end, [StringComparison]::Ordinal)
+        }
+        $lines = @($lines.ToArray())
+    } else {
+        $lines = @(foreach ($l in $text.Split("`n")) { $t = $l.Trim(); if ($t) { $t } })
     }
-    return $out
+    if (-not $lines.Count) { return @() }
+    $out = $null
+    try { $out = ('[' + ($lines -join ',') + ']') | ConvertFrom-Json } catch { }
+    if ($null -eq $out) {
+        $out = foreach ($l in $lines) {
+            try { $o = $l | ConvertFrom-Json } catch { continue }
+            if ($o -is [pscustomobject]) { $o }
+        }
+    }
+    if ($Slug) { $out = foreach ($o in @($out)) { if ($o.slug -eq $Slug) { $o } } }
+    return @($out)
+}
+
+# The fetch event's fields from a LeetCode question object.
+function Get-LcFetchEventData($Question) {
+    return [ordered]@{
+        ok = $true; id = $Question.questionFrontendId; title = $Question.title; difficulty = $Question.difficulty
+        tags = @($Question.topicTags | ForEach-Object { $_.name }); paid_only = [bool]$Question.isPaidOnly
+    }
 }
 
 function Get-LcAttempts($Events, [string]$Slug) {
@@ -62,58 +106,104 @@ function Save-LcSnapshot([string]$Root, [string]$Slug, [string]$SrcPath, [string
     return $dest
 }
 
-function Update-LcJourneyFile([string]$Root, [string]$MetaDir = '') {
-    if (-not $MetaDir) { $MetaDir = Join-Path (Split-Path -Parent $Root) 'leetcode-solves\tests\.meta' }
-    $events = @(Read-LcEvents $Root)
-    $slugs = @()
-    foreach ($e in $events) { if ($slugs -notcontains $e.slug) { $slugs += $e.slug } }
-    $rows = @()
-    foreach ($slug in $slugs) {
-        $mine = @($events | Where-Object { $_.slug -eq $slug })
-        if (-not ($mine | Where-Object { $_.event -eq 'test_run' })) { continue }
-        $solved = @($mine | Where-Object { $_.event -eq 'solved' })
-        $date = '-'; $maxTime = ''; $attempts = Get-LcAttempts $events $slug
-        if ($solved.Count) {
-            $date = ([string]$solved[0].ts).Substring(0, 10)
-            $attempts = $solved[0].attempts
-            $maxTime = ('{0} ms' -f ([double]$solved[0].max_ms).ToString('0.00', [Globalization.CultureInfo]::InvariantCulture))
+# One pass over the events: per slug (in order of first event), what its journey.md row needs.
+function Get-LcJourneyState($Events) {
+    $by = [ordered]@{}
+    foreach ($e in @($Events)) {
+        $slug = [string]$e.slug
+        $r = $by[$slug]
+        if ($null -eq $r) { $r = @{ Runs = 0; Since = 0; Solved = $null; Cx = ''; Note = ''; Fetch = $null }; $by[$slug] = $r }
+        switch ([string]$e.event) {
+            'test_run'    { $r.Runs++; $r.Since++ }
+            'solved'      { $r.Since = 0; if ($null -eq $r.Solved) { $r.Solved = $e } }
+            'analyze_run' { $r.Cx = [string]$e.complexity }
+            'note'        { $r.Note = [string]$e.text }
+            'fetch'       { if ($e.ok -eq $true) { $r.Fetch = $e } }
         }
-        $an = @($mine | Where-Object { $_.event -eq 'analyze_run' })
-        $cx = ''; if ($an.Count) { $cx = [string]$an[-1].complexity }
-        $notes = @($mine | Where-Object { $_.event -eq 'note' })
-        $note = ''; if ($notes.Count) { $note = [string]$notes[-1].text }
-
-        $id = ''; $title = $slug; $diff = ''; $tags = ''
-        $fetch = @($mine | Where-Object { $_.event -eq 'fetch' -and $_.ok -eq $true })
-        $q = $null
-        if ($fetch.Count) { $q = $fetch[-1] }
-        else {
-            $mp = Join-Path $MetaDir "$slug.json"
-            if (Test-Path -LiteralPath $mp) {
-                try {
-                    $j = [IO.File]::ReadAllText($mp, (New-LcUtf8)) | ConvertFrom-Json
-                    if ($j.data -and $j.data.question) { $j = $j.data.question }
-                    $q = [pscustomobject]@{
-                        id = $j.questionFrontendId; title = $j.title; difficulty = $j.difficulty
-                        tags = @($j.topicTags | ForEach-Object { if ($_.name) { $_.name } else { $_ } })
-                    }
-                } catch { $q = $null }
-            }
-        }
-        if ($q) {
-            if ($q.id) { $id = [string]$q.id }
-            if ($q.title) { $title = [string]$q.title }
-            if ($q.difficulty) { $diff = [string]$q.difficulty }
-            if ($q.tags) { $tags = (@($q.tags) -join ', ') }
-        }
-        $esc = { param($s) ([string]$s) -replace '\|', '\|' -replace "[\r\n]+", ' ' }
-        $rows += '| {0} | {1} | [{2}](https://leetcode.com/problems/{3}/) | {4} | {5} | {6} | {7} | {8} | {9} |' -f `
-            $date, $id, (& $esc $title), $slug, $diff, (& $esc $tags), (& $esc $cx), $maxTime, $attempts, (& $esc $note)
     }
-    $lines = @('| Date | # | Problem | Difficulty | Tags | Complexity | Max time | Attempts | Note |',
-               '|---|---|---|---|---|---|---|---|---|') + $rows
-    New-Item -ItemType Directory -Force $Root | Out-Null
-    [IO.File]::WriteAllText((Join-Path $Root 'journey.md'), (($lines -join "`n") + "`n"), (New-LcUtf8))
+    return $by
+}
+
+# One journey.md row, or $null for a slug without a test_run.
+function Format-LcJourneyRow([string]$Slug, $State, [string]$MetaDir) {
+    $r = $State
+    if (-not $r -or -not $r.Runs) { return $null }
+    $date = '-'; $maxTime = ''; $attempts = $r.Since
+    if ($r.Solved) {
+        $date = ([string]$r.Solved.ts).Substring(0, 10)
+        $attempts = $r.Solved.attempts
+        $maxTime = ('{0} ms' -f ([double]$r.Solved.max_ms).ToString('0.00', [Globalization.CultureInfo]::InvariantCulture))
+    }
+    $id = ''; $title = $Slug; $diff = ''; $tags = ''
+    $q = $r.Fetch
+    if (-not $q) {
+        $mp = Join-Path $MetaDir "$Slug.json"
+        if ([IO.File]::Exists($mp)) {
+            try {
+                $j = [IO.File]::ReadAllText($mp, (New-LcUtf8)) | ConvertFrom-Json
+                if ($j.data -and $j.data.question) { $j = $j.data.question }
+                $q = [pscustomobject]@{
+                    id = $j.questionFrontendId; title = $j.title; difficulty = $j.difficulty
+                    tags = @($j.topicTags | ForEach-Object { if ($_.name) { $_.name } else { $_ } })
+                }
+            } catch { $q = $null }
+        }
+    }
+    if ($q) {
+        if ($q.id) { $id = [string]$q.id }
+        if ($q.title) { $title = [string]$q.title }
+        if ($q.difficulty) { $diff = [string]$q.difficulty }
+        if ($q.tags) { $tags = (@($q.tags) -join ', ') }
+    }
+    $esc = { param($s) ([string]$s) -replace '\|', '\|' -replace "[\r\n]+", ' ' }
+    return '| {0} | {1} | [{2}](https://leetcode.com/problems/{3}/) | {4} | {5} | {6} | {7} | {8} | {9} |' -f `
+        $date, $id, (& $esc $title), $Slug, $diff, (& $esc $tags), (& $esc $r.Cx), $maxTime, $attempts, (& $esc $r.Note)
+}
+
+# Regenerates journey.md from the events (-Events: the list when the caller already has it).
+# -Slug: only that slug's events changed, so only its row is rebuilt (in place, or appended when new);
+# -Events then needs only that slug's events. With no usable journey.md yet, it regenerates everything.
+function Update-LcJourneyFile([string]$Root, [string]$MetaDir = '', $Events = $null, [string]$Slug = '') {
+    if (-not $MetaDir) { $MetaDir = Join-Path (Split-Path -Parent $Root) 'leetcode-solves\tests\.meta' }
+    $header = @('| Date | # | Problem | Difficulty | Tags | Complexity | Max time | Attempts | Note |',
+                '|---|---|---|---|---|---|---|---|---|')
+    $md = Join-Path $Root 'journey.md'
+    $lines = New-Object Collections.Generic.List[string]
+    $old = $null
+    if ($Slug -and [IO.File]::Exists($md)) { $old = [IO.File]::ReadAllLines($md, (New-LcUtf8)) }
+    if ($old -and $old.Count -ge 2 -and $old[0] -eq $header[0] -and $old[1] -eq $header[1]) {
+        if ($null -eq $Events) { $Events = Read-LcEvents $Root -Slug $Slug }
+        $mine = @(foreach ($e in @($Events)) { if ($e.slug -eq $Slug) { $e } })
+        $st = Get-LcJourneyState $mine
+        $row = Format-LcJourneyRow $Slug $st[$Slug] $MetaDir
+        $link = "](https://leetcode.com/problems/$Slug/) |"
+        $placed = $false
+        foreach ($l in $old) {
+            if (-not $l.Contains($link)) { $lines.Add($l); continue }
+            if ($row -and -not $placed) { $lines.Add($row); $placed = $true }
+        }
+        if ($row -and -not $placed) { $lines.Add($row) }
+    } else {
+        if ($null -eq $Events -or $Slug) { $Events = Read-LcEvents $Root }
+        foreach ($h in $header) { $lines.Add($h) }
+        $state = Get-LcJourneyState $Events
+        foreach ($s in @($state.Keys)) {
+            $row = Format-LcJourneyRow $s $state[$s] $MetaDir
+            if ($row) { $lines.Add($row) }
+        }
+    }
+    if (-not [IO.Directory]::Exists($Root)) { New-Item -ItemType Directory -Force $Root | Out-Null }
+    [IO.File]::WriteAllText($md, (($lines -join "`n") + "`n"), (New-LcUtf8))
+}
+
+# git's first meaningful output line. "$_" gives a stderr record's bare text (Out-String would add
+# PS 5.1's "git.exe : " and position lines); warning:/hint: lines are skipped.
+function Get-LcGitReason($Output) {
+    foreach ($l in @($Output | ForEach-Object { "$_" -split '\r?\n' })) {
+        $t = ($l -replace '^git(\.exe)?\s*:\s*', '').Trim()
+        if ($t -and $t -notmatch '^(warning|hint):') { return $t }
+    }
+    return 'git failed'
 }
 
 function Invoke-LcSolveCommit([string]$RepoDir, [string[]]$Paths, [string]$Message) {
@@ -130,12 +220,12 @@ function Invoke-LcSolveCommit([string]$RepoDir, [string[]]$Paths, [string]$Messa
             if (($full.TrimEnd('\') + '\').StartsWith($topFull, [StringComparison]::OrdinalIgnoreCase)) { $inside += $full }
         }
         if (-not $inside.Count) { return $false }
-        $r = (& git -C $top add -- @inside 2>&1 | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0) { Write-Host ('(not committed: ' + ($r -split "`n")[0].Trim() + ')'); return $false }
+        $r = @(& git -C $top add -- @inside 2>&1)
+        if ($LASTEXITCODE -ne 0) { Write-Host "(not committed: $(Get-LcGitReason $r))"; return $false }
         & git -C $top diff --cached --quiet -- @inside 2>$null
         if ($LASTEXITCODE -eq 0) { return $false }
-        $r = (& git -C $top commit -m $Message -- @inside 2>&1 | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0) { Write-Host ('(not committed: ' + ($r -split "`n")[0].Trim() + ')'); return $false }
+        $r = @(& git -C $top commit -m $Message -- @inside 2>&1)
+        if ($LASTEXITCODE -ne 0) { Write-Host "(not committed: $(Get-LcGitReason $r))"; return $false }
         return $true
     } finally { $ErrorActionPreference = $old }
 }

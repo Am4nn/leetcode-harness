@@ -97,6 +97,7 @@ function Show-CrashLine {
         [Parameter(Mandatory)][string]$WorkDir,
         [Parameter(Mandatory)][string]$Src
     )
+    $script:LcCrashLine = $null
     Write-Host 'Finding the crash line...' -ForegroundColor DarkGray
     if ($Build) { & $Build | Out-Null }
     else { & $Gpp @CompileArgs -o $DebugExe 2>&1 | Out-Null }
@@ -114,6 +115,7 @@ function Show-CrashLine {
             $fn = $Matches[1]; $n = [int]$Matches[3]
             if ("$fn`:$n" -eq $prev) { continue }  # recursion repeats the same frame
             $prev = "$fn`:$n"
+            if (-not $found) { $script:LcCrashLine = $n }  # for callers that log the crash
             $label = if ($found) { '  called from' } else { '  crashed at ' }
             Write-Host ("{0} line {1,-4} in {2}:  {3}" -f $label, $n, $fn, $lines[$n - 1].Trim()) -ForegroundColor Yellow
             $found = $true

@@ -8,9 +8,21 @@
     if (Test-Path -LiteralPath $tmp) { Remove-Item -Recurse -Force -LiteralPath $tmp }
     Copy-Item -Recurse (Join-Path $repo 'lc\selftest') $tmp
     $journey = Join-Path $tmp 'journey'
+    # The temp copy is a git repo, so the solve commit can be checked (all other runs pass -NoCommit).
+    $git = (Get-Command git -ErrorAction Stop).Source
+    & $git -C $tmp init -q 2>$null
+    & $git -C $tmp config user.email lc@example.com
+    & $git -C $tmp config user.name lc
+    & $git -C $tmp add -A 2>$null
+    & $git -C $tmp commit -q -m init
+    # Every run writes its journey under $tmp; the real dsa/journey is never touched.
+    $realEvents = Join-Path $repo 'journey\events.jsonl'
+    $realEventsTime = $null
+    if (Test-Path -LiteralPath $realEvents) { $realEventsTime = (Get-Item -LiteralPath $realEvents).LastWriteTimeUtc }
     . (Join-Path $repo '.zed\common.ps1')
     . (Join-Path $repo '.zed\lc\info.ps1')
     . (Join-Path $repo '.zed\lc\build.ps1')
+    . (Join-Path $repo '.zed\lc\journey.ps1')
     # R27: builds go to a build root of their own, so self-tests never touch the user's build/ caches.
     $oldBuildRoot = $env:LC_BUILD_ROOT
     $env:LC_BUILD_ROOT = Join-Path $env:TEMP 'lc-e2e-build'
@@ -18,9 +30,13 @@
     $userGchTime = $null
     if (Test-Path -LiteralPath $userGch) { $userGchTime = (Get-Item -LiteralPath $userGch).LastWriteTimeUtc }
 
-    function Invoke-Lc([string]$File, [string[]]$Extra = @(), [string]$Stdin = '') {
+    # -Wait drops -NoWait (closing prompts read stdin); -Commit drops -NoCommit.
+    function Invoke-Lc([string]$File, [string[]]$Extra = @(), [string]$Stdin = '', [switch]$Wait, [switch]$Commit) {
+        $flags = @('-NoOpen', '-Offline')
+        if (-not $Wait) { $flags += '-NoWait' }
+        if (-not $Commit) { $flags += '-NoCommit' }
         $sw = [Diagnostics.Stopwatch]::StartNew()
-        $out = $Stdin | powershell -NoProfile -ExecutionPolicy Bypass -File $lcPs1 -Mode test -NoWait -NoOpen -NoCommit -Offline -JourneyRoot $journey @Extra $File 2>&1 | Out-String
+        $out = $Stdin | powershell -NoProfile -ExecutionPolicy Bypass -File $lcPs1 -Mode test @flags -JourneyRoot $journey @Extra $File 2>&1 | Out-String
         $code = $LASTEXITCODE
         $sw.Stop()
         return @{ Out = $out; Code = $code; Ms = $sw.ElapsedMilliseconds }
@@ -47,6 +63,7 @@
             Assert-True (Test-Path -LiteralPath $tf) "e2e: tests/$slug.txt not created"
             Assert-True ([IO.File]::ReadAllText($tf).StartsWith("# $($titles[$slug]) (#")) "e2e: tests/$slug.txt header"
             if ($slug -eq 'two-sum') { $firstTwoSum = $r }
+            Assert-True ($r.Out -notmatch 'Note \(') "e2e: $slug -NoWait prompted for a note`n$($r.Out)"
             if ($slug -eq 'concatenation-of-array') {
                 # e2e: debug prints don't break results
                 Assert-Match $r.Out 'debug!'
@@ -54,6 +71,24 @@
                 Assert-Match $r.Out '(?m)^concatenation-of-array  \(#1929 Easy - Array, Simulation\)\s*$'
             }
         }
+
+        # e2e: journey events for the runs above (written silently; -NoCommit made no commit)
+        $ev = @(Read-LcEvents $journey)
+        foreach ($slug in $titles.Keys) {
+            $mine = @($ev | Where-Object { $_.slug -eq $slug })
+            Assert-Equal @($mine | Where-Object { $_.event -eq 'test_run' }).Count 1 "e2e: $slug test_run events"
+            Assert-Equal @($mine | Where-Object { $_.event -eq 'solved' }).Count 1 "e2e: $slug solved events"
+            Assert-Equal $mine[0].file "$slug.cpp"
+            Assert-Equal @(Get-ChildItem -LiteralPath (Join-Path $journey "snapshots\$slug") -Filter *.cpp).Count 1 "e2e: $slug snapshot"
+        }
+        $tr = @($ev | Where-Object { $_.slug -eq 'two-sum' -and $_.event -eq 'test_run' })[0]
+        Assert-True ($tr.compile_ok -eq $true -and $tr.passed -eq 3 -and $tr.failed -eq 0 -and $tr.printed -eq 0) "e2e: two-sum test_run $($tr | ConvertTo-Json -Compress)"
+        Assert-Equal (@($tr.cases | ForEach-Object { "$($_.n):$($_.status)" }) -join ',') '1:pass,2:pass,3:pass'
+        Assert-Equal $tr.src_hash (Get-LcSrcHash $twoSum)
+        $sv = @($ev | Where-Object { $_.slug -eq 'two-sum' -and $_.event -eq 'solved' })[0]
+        Assert-True ($sv.attempts -eq 1 -and $null -ne $sv.max_ms) "e2e: two-sum solved $($sv | ConvertTo-Json -Compress)"
+        Assert-Match ([IO.File]::ReadAllText((Join-Path $journey 'journey.md'))) '\| 1 \| \[Two Sum\]\(https://leetcode\.com/problems/two-sum/\) \| Easy \|'
+        Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '1' 'e2e: a -NoCommit run committed'
 
         # e2e: rerun skips compile
         $twoSumDir = Get-LcBuildDir $twoSum
@@ -136,6 +171,7 @@
         $r = Invoke-Lc (Join-Path $tmp 'slow\climbing-stairs.cpp') @('-TimeoutMs', '2000')
         Assert-Match $r.Out 'TIMEOUT 1: still running after 2 s'
         Assert-Equal $r.Code 1 "e2e: timeout exit code`n$($r.Out)"
+        Assert-Equal (@(Read-LcEvents $journey)[-1].crash.cause) 'timeout'
         Assert-True ($r.Ms -lt 15000) "e2e: timeout run took $($r.Ms) ms"
 
         # e2e: crash line
@@ -145,6 +181,10 @@
         Assert-Match $r.Out 'CRASH 1'
         Assert-Match $r.Out "crashed at\s+line $line\b"
         Assert-Equal $r.Code 1 'e2e: crash exit code'
+        $tr = @(Read-LcEvents $journey)[-1]
+        Assert-True ($tr.event -eq 'test_run' -and $tr.file -eq 'crash/rotate-array.cpp') "e2e: crash test_run $($tr | ConvertTo-Json -Compress)"
+        Assert-True ($tr.crash.code -ne 0 -and $tr.crash.cause -and $tr.crash.line -eq $line) "e2e: crash fields $($tr.crash | ConvertTo-Json -Compress)"
+        Assert-Equal (@($tr.cases)[-1].status) 'crash'
 
         # e2e: typed input - an empty answer for a later parameter stops without running or saving
         $r = Invoke-Lc (Join-Path $tmp 'my-scratch.cpp') -Stdin "7`n`n"
@@ -165,6 +205,9 @@
         $r = Invoke-Lc (Join-Path $tmp 'my-scratch.cpp') -Stdin "2`n3`n`n"
         Assert-True $r.Out.Contains('----  1  5') "e2e: typed input`n$($r.Out)"
         Assert-Match ([IO.File]::ReadAllText((Join-Path $tmp 'tests\my-scratch.txt'))) '(?m)^Input: a = 2, b = 3\s*$'
+        $ev = @(Read-LcEvents $journey)
+        Assert-Equal "$($ev[-2].event)|$($ev[-2].input)" 'typed_case|Input: a = 2, b = 3'
+        Assert-Equal "$($ev[-1].event)|$($ev[-1].printed)|$(@($ev[-1].cases).Count)" 'test_run|1|1'
 
         # e2e: unsupported type
         $r = Invoke-Lc (Join-Path $tmp 'odd\my-map.cpp')
@@ -205,6 +248,43 @@
         $r = Invoke-Lc (Join-Path $tmp 'concatenation-of-array.cpp')
         Assert-Match $r.Out '(?m)^\s+----\s+3\s+\[1,2,3[0-9,]*\.\.\.\s'
         Assert-True ($r.Out -notmatch '40\]') "e2e: ---- line not truncated`n$($r.Out)"
+
+        # e2e: a compile error is still a test_run (compile_ok false), with a snapshot of the broken source
+        $snaps = Join-Path $journey 'snapshots\two-sum'
+        $snapCount = @(Get-ChildItem -LiteralPath $snaps -Filter *.cpp).Count
+        $good = [IO.File]::ReadAllText($twoSum)
+        [IO.File]::AppendAllText($twoSum, "int broken = undefined_name;`n", $utf8)
+        $r = Invoke-Lc $twoSum
+        Assert-Equal $r.Code 1 "e2e: compile error exit code`n$($r.Out)"
+        $tr = @(Read-LcEvents $journey)[-1]
+        Assert-True ($tr.event -eq 'test_run' -and $tr.compile_ok -eq $false -and @($tr.cases).Count -eq 0) "e2e: compile error test_run $($tr | ConvertTo-Json -Compress)"
+        Assert-Equal @(Get-ChildItem -LiteralPath $snaps -Filter *.cpp).Count ($snapCount + 1) 'e2e: compile error snapshot'
+
+        # e2e: note prompt and solve commit - without -NoWait/-NoCommit, stdin answers the note
+        [IO.File]::WriteAllText($twoSum, $good + "// solved again`n", $utf8)
+        $r = Invoke-Lc $twoSum -Wait -Commit -Stdin "two pointers next`n"
+        Assert-Equal $r.Code 0 "e2e: note run`n$($r.Out)"
+        Assert-True $r.Out.Contains('Note (Enter to skip): ') "e2e: note prompt`n$($r.Out)"
+        Assert-True ($r.Out -notmatch 'Press Enter|not committed') "e2e: note run output`n$($r.Out)"
+        $h = Get-LcSrcHash $twoSum
+        $mine = @(Read-LcEvents $journey | Where-Object { $_.slug -eq 'two-sum' -and $_.src_hash -eq $h })
+        Assert-Equal (($mine | ForEach-Object { $_.event }) -join ',') 'test_run,solved,note'
+        Assert-Equal $mine[2].text 'two pointers next'
+        # runs since the edited version's solve: the lc.h-touch rerun, the compile error, this one
+        Assert-Equal $mine[1].attempts 3 'e2e: attempts since the last solve'
+        Assert-Match ([IO.File]::ReadAllText((Join-Path $journey 'journey.md'))) '(?m)^\| [0-9-]+ \| 1 \| \[Two Sum\]\(https://leetcode\.com/problems/two-sum/\) \| Easy \| Array, Hash Table \|  \| [0-9.]+ ms \| 1 \| two pointers next \|$'
+        Assert-Equal ((& $git -C $tmp log -1 --format=%s) -join '') 'solve: two-sum (Easy)'
+        Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '2'
+        $files = @(& $git -C $tmp show --name-only --format= HEAD)
+        foreach ($p in 'two-sum.cpp', 'tests/two-sum.txt', 'journey/events.jsonl', 'journey/journey.md') {
+            Assert-True ($files -contains $p) "e2e: solve commit lacks $p ($($files -join ', '))"
+        }
+        Assert-True (-not ($files -match '^(tests/rotate-array\.txt|odd/)')) "e2e: solve commit took other files ($($files -join ', '))"
+        Assert-Match ((& $git -C $tmp show HEAD:journey/events.jsonl) -join "`n") '"event":"note".*"text":"two pointers next"'
+
+        # e2e: the real dsa/journey was never written
+        if ($null -eq $realEventsTime) { Assert-True (-not (Test-Path -LiteralPath $realEvents)) 'e2e: wrote the real journey' }
+        else { Assert-Equal (Get-Item -LiteralPath $realEvents).LastWriteTimeUtc $realEventsTime 'e2e: wrote the real journey' }
 
         # e2e: the user's own build cache was left alone
         if ($null -ne $userGchTime) {

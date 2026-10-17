@@ -4,11 +4,11 @@
 [CmdletBinding(PositionalBinding = $false)]
 param(
     [ValidateSet('test', 'analyze')][string]$Mode = 'test',
-    [switch]$NoWait,      # exit without "Press Enter to close" (self-tests)
+    [switch]$NoWait,      # exit without the closing prompt ("Press Enter to close" / "Note") (self-tests)
     [switch]$NoOpen,      # don't open a newly created test file in Zed
     [switch]$Offline,     # never contact LeetCode; use the .meta cache only
-    [switch]$NoCommit,    # no auto-commit on solve (no-op until auto-commit exists)
-    [string]$JourneyRoot = '',
+    [switch]$NoCommit,    # no auto-commit on solve
+    [string]$JourneyRoot = '',   # event log, snapshots, journey.md (default <dsa>/journey)
     [int]$TimeoutMs = 30000,
     # The path may arrive split on spaces ("c++ language"), so take all remaining args.
     [Parameter(ValueFromRemainingArguments)][string[]]$Rest
@@ -19,13 +19,69 @@ param(
 . (Join-Path $PSScriptRoot 'lc\fetch.ps1')
 . (Join-Path $PSScriptRoot 'lc\testfile.ps1')
 . (Join-Path $PSScriptRoot 'lc\build.ps1')
+. (Join-Path $PSScriptRoot 'lc\journey.ps1')
 
 $dsaRoot = Split-Path -Parent $PSScriptRoot
 if (-not $JourneyRoot) { $JourneyRoot = Join-Path $dsaRoot 'journey' }
+$JourneyRoot = [IO.Path]::GetFullPath($JourneyRoot)
 $utf8 = New-Object Text.UTF8Encoding $false
 $inv = [Globalization.CultureInfo]::InvariantCulture
 
+# ---- journey (silent): events, snapshot, journey.md, solve commit ----
+$events = $null   # this slug's events, read once on the first new event
+$jRun = $null     # this run's test_run, from the build on: @{ CompileOk; CompileMs; Cases; Crash; Clean; MaxMs }
+
+function Add-LcEvent([string]$Name, [Collections.IDictionary]$Data = @{}) {
+    if ($null -eq $script:events) { $script:events = [Collections.ArrayList]@(Read-LcEvents $JourneyRoot -Slug $slug) }
+    [void]$script:events.Add((Write-LcEvent -Root $JourneyRoot -Event $Name -Slug $slug -File $relFile -SrcHash $srcHash -Data $Data -PassThru))
+}
+
+# Records a run's results (and the case that never finished) in this run's test_run.
+function Add-LcRunCases($run, [int]$FirstN = 1) {
+    foreach ($r in $run.Results) {
+        $c = [ordered]@{ n = $FirstN + [int]$r.n - 1; status = [string]$r.status }
+        if ($null -ne $r.ms) { $c.ms = [double]$r.ms }
+        [void]$script:jRun.Cases.Add($c)
+    }
+    if ($null -ne $run.Pending) { [void]$script:jRun.Cases.Add([ordered]@{ n = $FirstN + $run.Pending - 1; status = 'crash' }) }
+}
+
+# Writes test_run (+ solved), the snapshot and journey.md; asks for a note after a clean run; commits a solve.
+function Complete-LcJourney([int]$code) {
+    $r = $script:jRun
+    $cases = @($r.Cases.ToArray())
+    $data = [ordered]@{
+        compile_ok = $r.CompileOk; compile_ms = $r.CompileMs; cases = $cases
+        passed  = @($cases | Where-Object { $_.status -eq 'pass' }).Count
+        failed  = @($cases | Where-Object { $_.status -eq 'fail' -or $_.status -eq 'error' }).Count
+        printed = @($cases | Where-Object { $_.status -eq 'print' }).Count
+    }
+    if ($r.Crash) { $data.crash = $r.Crash }
+    Add-LcEvent 'test_run' $data
+    [void](Save-LcSnapshot -Root $JourneyRoot -Slug $slug -SrcPath $src -SrcHash $srcHash)
+    $solved = $false
+    if ($r.Clean -and -not (Test-LcSolvedBefore $script:events $slug $srcHash)) {
+        Add-LcEvent 'solved' ([ordered]@{ attempts = (Get-LcAttempts $script:events $slug); max_ms = $r.MaxMs })
+        $solved = $true
+    }
+    if ($r.Clean -and -not $NoWait) {
+        Write-Host "`nNote (Enter to skip): " -NoNewline
+        $note = [Console]::ReadLine()
+        if ($note -and $note.Trim()) { Add-LcEvent 'note' @{ text = $note.Trim() } }
+    }
+    Update-LcJourneyFile -Root $JourneyRoot -MetaDir (Join-Path $testsDir '.meta') -Slug $slug -Events $script:events
+    if ($solved -and -not $NoCommit) {
+        $msg = "solve: $slug"
+        if ($q -and $q.difficulty) { $msg += " ($($q.difficulty))" }
+        $paths = @($src, $testFile, (Join-Path (Join-Path $testsDir '.meta') "$slug.json"), $JourneyRoot)
+        [void](Invoke-LcSolveCommit -RepoDir (Split-Path -Parent $src) -Paths $paths -Message $msg)
+    }
+    if ($r.Clean -or $NoWait) { exit $code }
+    Finish $code
+}
+
 function Exit-Lc([int]$code) {
+    if ($null -ne $script:jRun) { Complete-LcJourney $code }
     if ($NoWait) { exit $code }
     Finish $code
 }
@@ -40,9 +96,15 @@ $slug = [IO.Path]::GetFileNameWithoutExtension($src)
 $testsDir = Join-Path (Split-Path -Parent $src) 'tests'
 $testFile = Join-Path $testsDir "$slug.txt"
 $srcText = [IO.File]::ReadAllText($src)
+$srcHash = Get-LcSrcHash $src
+# Event "file": relative to the folder holding the journey (the dsa root by default), else the full path.
+$jBase = (Split-Path -Parent $JourneyRoot).TrimEnd('\') + '\'
+$relFile = $src.Replace('\', '/')
+if ($src.StartsWith($jBase, [StringComparison]::OrdinalIgnoreCase)) { $relFile = $src.Substring($jBase.Length).Replace('\', '/') }
 
 # ---- problem info: LeetCode metadata (cached), else the source ----
 $fetch = Get-LcCachedQuestion -TestsDir $testsDir -Slug $slug -Offline:$Offline
+if ($fetch.Fetched) { Add-LcEvent 'fetch' (Get-LcFetchEventData $fetch.Question) }
 $q = $fetch.Question
 if ($q -and -not $q.metaData) { $q = $null }
 if ($q) {
@@ -118,7 +180,10 @@ if ($info.Kind -eq 'function' -and $cases.Count -gt 0) {
 # ---- build ----
 $harnessText = New-LcHarnessText -Info $info
 $userText = New-LcUserText -SrcPath $src -Info $info
+$jRun = @{ CompileOk = $false; CompileMs = 0; Cases = New-Object Collections.ArrayList; Crash = $null; Clean = $false; MaxMs = 0 }
 $build = Build-LcExe -SrcPath $src -HarnessText $harnessText -UserText $userText -Flavor test
+$jRun.CompileOk = [bool]$build.Ok
+$jRun.CompileMs = $build.Ms
 if (-not $build.Ok) {
     $t = $null
     if ($build.Stage -eq 'harness') {
@@ -207,15 +272,22 @@ function Write-LcStop($run, [int]$FirstN = 1) {
     if ($null -ne $run.Pending) { $n = [string]($FirstN + $run.Pending - 1) }
     if ($m.TimedOut) {
         Write-Host ("  TIMEOUT {0}: still running after {1} s - infinite loop or far too slow?" -f $n, ($TimeoutMs / 1000)) -ForegroundColor Red
+        $script:jRun.Crash = [ordered]@{ code = $null; cause = 'timeout' }
         return $true
     }
     if ($m.Code -eq 0) { return $false }
-    if ($null -eq $run.Pending -and $m.Code -eq 2) { return $true }  # the runner printed the problem
-    Write-Host "  CRASH ${n}: $(Explain $m.Code)" -ForegroundColor Red
+    if ($null -eq $run.Pending -and $m.Code -eq 2) {  # the runner printed the problem
+        $script:jRun.Crash = [ordered]@{ code = 2; cause = 'runner error' }
+        return $true
+    }
+    $cause = Explain $m.Code
+    Write-Host "  CRASH ${n}: $cause" -ForegroundColor Red
+    $script:jRun.Crash = [ordered]@{ code = $m.Code; cause = $cause }
     if ($m.Code -ne -1073741510) {  # not Ctrl+C
         $debugBuild = { Build-LcExe -SrcPath $script:src -HarnessText $script:harnessText -UserText $script:userText -Flavor debug }
         Show-CrashLine -Build $debugBuild -DebugExe (Join-Path $buildDir 'debug.exe') `
             -GdbRun 'test cases.txt results-debug.txt > NUL 2> NUL' -WorkDir $buildDir -Src $src
+        if ($script:LcCrashLine) { $script:jRun.Crash.line = $script:LcCrashLine }
     }
     return $true
 }
@@ -245,8 +317,10 @@ if ($cases.Count -eq 0) {
                 if ($old.Length -gt 0) { $prefix = "`n"; if (-not $old.EndsWith("`n")) { $prefix = "`n`n" } }
             }
             [IO.File]::AppendAllText($testFile, "$prefix$line`n", $utf8)
+            Add-LcEvent 'typed_case' @{ input = $line }
         }
         $run = Invoke-LcCases @(@{ Args = [string[]]$vals; Expected = $null })
+        Add-LcRunCases $run -FirstN $k
         Write-LcResults $run.Results -FirstN $k
         if (@($run.Results | Where-Object { $_.status -eq 'error' }).Count) { $code = 1 }
         if (Write-LcStop $run -FirstN $k) { Exit-Lc 1 }
@@ -256,6 +330,7 @@ if ($cases.Count -eq 0) {
 }
 
 $run = Invoke-LcCases $cases
+Add-LcRunCases $run
 Write-LcResults $run.Results
 if (Write-LcStop $run) { Exit-Lc 1 }
 
@@ -270,4 +345,7 @@ if ($errors) { $parts += "$errors error" + $(if ($errors -gt 1) { 's' } else { '
 $allPassed = $passed -eq $compared -and $errors -eq 0
 $color = if (-not $allPassed) { 'Red' } elseif ($compared) { 'Green' } else { 'Gray' }
 Write-Host ($parts -join ' - ') -ForegroundColor $color
+# Clean: every compared case passed (at least one), against LeetCode's own method name.
+$jRun.Clean = $allPassed -and $compared -gt 0 -and -not $mismatch
+if ($jRun.Clean) { $jRun.MaxMs = [double](@($run.Results | ForEach-Object { [double]$_.ms }) | Measure-Object -Maximum).Maximum }
 Exit-Lc $(if ($allPassed) { 0 } else { 1 })
