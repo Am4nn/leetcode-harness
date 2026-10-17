@@ -4,3 +4,6 @@ build/
 # Rewritten by the Alt+A autocomplete toggle on every press
 .zed/settings.json
 .zed/toggle-autocomplete.log
+
+# Local build notes from Claude Code sessions
+.superpowers/
