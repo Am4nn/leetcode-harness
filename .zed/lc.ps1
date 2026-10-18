@@ -352,7 +352,7 @@ if ($Mode -eq 'analyze') {
     $fit = Get-LcComplexity -Points $b.Points
     $stopped = $m.TimedOut -or $null -ne $b.Capped
     if (-not $fit.TooFast) { $cx = $fit.Label; if ($design) { $cx = Get-LcPerCallLabel $cx }; $what = "looks $cx" }
-    elseif ($stopped) { $cx = 'too few sizes to tell'; $what = $cx }
+    elseif ($stopped -or $fit.TooFew) { $cx = 'too few sizes to tell'; $what = $cx }
     else { $cx = 'too fast to measure'; $what = $cx }
     if ($design -and -not $fit.TooFast) { $cx += ' per call' }
     $growth = $what

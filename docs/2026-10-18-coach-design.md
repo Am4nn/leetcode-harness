@@ -29,8 +29,8 @@ A personal tracker and helper, modelled on the coach in 90x (`Web Development/90
   - `solution`: the agent showed the full solution;
   - `review`, with `score` (1-10), `label` (Poor, Fair, Good or Great) and `pattern`.
 - **journey.md Status**, checked in this order:
-  1. `failed` if a `solution` event exists;
-  2. `accepted with hints` if accepted and a `hint` came before the first accept;
+  1. `failed` if a `solution` event came before the first accept, or it isn't accepted;
+  2. `accepted with hints` if accepted and a `hint` came before the first accept. An accept's time is its `submitted_at`, not when a run found it;
   3. `accepted` if accepted;
   4. `failed` if 7 days have passed since the problem's first event, and accepts are tracked (a LeetCode username is set) or it never passed locally;
   5. `passed locally` if it passed locally;

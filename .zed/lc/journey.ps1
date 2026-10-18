@@ -43,13 +43,30 @@ function Write-LcEvent([string]$Root, [string]$Event, [string]$Slug, [string]$Fi
     $line = ($o | ConvertTo-Json -Compress -Depth 8) + "`n"
     if (-not [IO.Directory]::Exists($Root)) { New-Item -ItemType Directory -Force $Root | Out-Null }
     $p = Join-Path $Root 'events.jsonl'
-    if ([IO.File]::Exists($p)) {
-        # A line cut short by a crash must not swallow this one.
-        $fs = [IO.File]::OpenRead($p)
-        try { if ($fs.Length -gt 0) { [void]$fs.Seek(-1, 'End'); if ($fs.ReadByte() -ne 10) { $line = "`n" + $line } } }
-        finally { $fs.Dispose() }
+    # Another process appending right now (a run, or the coach recording a hint) holds the file: retry that
+    # sharing violation for a few seconds. Any other failure (a read-only log) goes up to the caller.
+    # (The type is tested by hand: once PS 5.1 compiles a loop, a typed catch no longer unwraps a method
+    # call's MethodInvocationException.)
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    while ($true) {
+        try {
+            $out = $line
+            if ([IO.File]::Exists($p)) {
+                # A line cut short by a crash must not swallow this one.
+                $fs = [IO.File]::Open($p, 'Open', 'Read', 'ReadWrite')
+                try { if ($fs.Length -gt 0) { [void]$fs.Seek(-1, 'End'); if ($fs.ReadByte() -ne 10) { $out = "`n" + $line } } }
+                finally { $fs.Dispose() }
+            }
+            [IO.File]::AppendAllText($p, $out, (New-LcUtf8))
+            break
+        } catch {
+            $e = $_.Exception
+            if ($e -is [Management.Automation.MethodInvocationException] -and $e.InnerException) { $e = $e.InnerException }
+            $busy = ($e -is [IO.IOException]) -and (($e.HResult -band 0xFFFF) -in @(32, 33))
+            if (-not $busy -or [DateTime]::UtcNow -gt $deadline) { throw }
+        }
+        Start-Sleep -Milliseconds 20
     }
-    [IO.File]::AppendAllText($p, $line, (New-LcUtf8))
     if ($PassThru) { return [pscustomobject]$o }
 }
 

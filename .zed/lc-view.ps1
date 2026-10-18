@@ -138,7 +138,7 @@ function Get-LcViewData {
         if ($slug -cmatch '^[a-z0-9-]+$' -and ([IO.File]::Exists((Join-Path $SolutionsRoot "$slug.cpp")) -or [IO.Directory]::Exists((Join-Path $snapDir $slug)))) { $slug }
     })
     $local = Join-Path $JourneyRoot 'local'
-    $memory = @(Read-LcMemory $local $now | Where-Object { $_.status -ne 'dismissed' })
+    $memory = @(Read-LcMemory $local $now -NoSave | Where-Object { $_.status -ne 'dismissed' })  # read-only: ages, never writes
     $weekly = @()
     $weekDir = Join-Path $local 'weekly'
     if (Test-Path -LiteralPath $weekDir) {

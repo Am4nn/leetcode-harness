@@ -6,9 +6,9 @@ I practice LeetCode in C++ here. Use my files to answer questions about my solut
 - `leetcode-solves/<slug>.cpp`: my solutions.
 - `cases/<slug>/cases.txt`: test cases. `cases/<slug>/brute.cpp` is an optional brute force.
 - `journey/events.jsonl`: every run, with pass/fail, each failing case's input, expected and got, compile errors, crashes, timings, complexity results, notes, LeetCode accepts, and the hints, solutions and reviews you gave.
-- `journey/journey.md`: one row per problem: status, difficulty, tags, complexity, attempts, note. Status is `accepted`, `accepted with hints`, `passed locally`, `attempted` or `failed` (solution shown, or no pass or accept within 7 days).
+- `journey/journey.md`: one row per problem: status, difficulty, tags, complexity, attempts, note. Status is `accepted`, `accepted with hints`, `passed locally`, `attempted` or `failed` (a solution shown before LeetCode accepted it, or 7 days since the first run with no local pass yet or, with a username set, no accept yet).
 - `journey/problems/<slug>.json`: the problem from LeetCode, including statement, tags and constraints.
-- `journey/snapshots/<slug>/`: every version of a solution I ran, named `<time>-<src_hash>.cpp`, so a run's `src_hash` finds its code.
+- `journey/snapshots/<slug>/`: every version of a solution I ran, named `<time>-<src_hash>.cpp`, so a run's `src_hash` finds its code. Older snapshots are named `<time>.cpp` only: match those to runs by time.
 - `journey/local/`: your memory about me and the weekly reads. Git-ignored, never pushed.
 - `build/runs/`: my last 50 runs from Zed (F7, Shift+F7, Ctrl+F7, Alt+F7, Alt+F8). Each run has the full terminal output and a copy of the source as it ran. Read them through the context command below.
 
@@ -52,12 +52,15 @@ Pattern: <name>.  Related: <2-3 problems with the same pattern that aren't in jo
 
 **Patterns and progress:** answer from my data: run `powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc-stats.ps1` (`-Since yyyy-MM-dd` for a window) and read the memory. Don't answer from general advice.
 
-**Check before claiming.** When a claim about my code can be tested, run it instead of guessing. Use a temp journey and no commit, so the check doesn't count as one of my attempts:
-`powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc.ps1 -Mode test -NoWait -NoOpen -NoCommit -JourneyRoot $env:TEMP\lc-ask leetcode-solves\<slug>.cpp`
-(`-Mode analyze` gives complexity and TLE risk.) Without `-LogRun` the check isn't logged, so it doesn't replace my latest run.
+**Check before claiming.** When a claim about my code can be tested, run it instead of guessing. Run it on copies, never on my `cases/` or `journey/`, so the check doesn't count as one of my attempts or change my files:
+1. Copy `cases\<slug>\` to `$env:TEMP\lc-ask\cases\<slug>\` and `journey\problems\<slug>.json` to `$env:TEMP\lc-ask\journey\problems\`.
+2. Add the input you want to try to the copied `cases.txt`. A case without `Output:` is only printed.
+3. Run `powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc.ps1 -Mode test -NoWait -NoOpen -NoCommit -Offline -JourneyRoot $env:TEMP\lc-ask\journey -CasesRoot $env:TEMP\lc-ask\cases leetcode-solves\<slug>.cpp`
+
+`-Mode analyze` gives complexity and TLE risk. Without `-LogRun` the check isn't logged, so it doesn't replace my latest run.
 
 ## Records and memory
-Run these as `powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc-coach.ps1 <command> ...`. Each prints one line; none of them commit. Text with double quotes or several lines must go through a file: write it to a temp file and pass `-TextFile <path>` in place of `-Text`.
+Run these as `powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc-coach.ps1 <command> ...`. Each prints one line; none of them commit. Text with double quotes or several lines must go through a file: write it to a temp file and pass `-TextFile <path>` in place of `-Text`, or `-IdeaFile <path>` in place of `-Idea`. A command that prints `error: ...` and exits 1 saved nothing; tell me it failed.
 - **Record what you gave:**
   - after each hint from the hint ladder: `hint -Slug <slug>`;
   - after showing the full solution: `solution -Slug <slug>`;

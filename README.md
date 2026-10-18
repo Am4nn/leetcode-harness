@@ -104,12 +104,12 @@ Write a slow, obviously correct version as `cases/<slug>/brute.cpp`, as a normal
 
 Everything lands in `journey/`:
 
-- `events.jsonl`: one JSON line per action (fetch, test run, solve, analyze, note). Nothing is ever deleted from it. It's meant to feed a web view of progress and patterns later.
+- `events.jsonl`: one JSON line per action (fetch, test run, solve, analyze, note, LeetCode accept, and the coach's hints, solutions and reviews). Nothing is ever deleted from it. It's meant to feed a web view of progress and patterns later.
 - `journey.md`: a table with one row per problem. Columns: date solved, status, difficulty, tags, complexity, slowest case time, attempts and your note.
 - `snapshots/<slug>/`: a copy of the solution each time it changes, so you can see it go from brute force to optimal.
 - `problems/<slug>.json`: the problem's title, difficulty, tags and examples as fetched from LeetCode, so runs work offline.
 
-Status is `accepted` once LeetCode has accepted a submission (`accepted with hints` if the coach gave hints first), `passed locally` when every local case passed, and `attempted` otherwise. It becomes `failed` when the coach showed you the solution, or when 7 days pass without a pass or, with a username set, an accept. To get `accepted`, put your LeetCode username (from `leetcode.com/u/<username>`) in `.zed/leetcode-user.txt`. The file is git-ignored, and each run then reads your public list of recent accepts, with no login. A run prints `LeetCode accepted: <slug>` when it finds a new one.
+Status is `accepted` once LeetCode has accepted a submission (`accepted with hints` if the coach gave hints first), `passed locally` when every local case passed, and `attempted` otherwise. It becomes `failed` when the coach showed you the solution before LeetCode accepted it, or while 7 days have passed without a pass or, with a username set, an accept. Hints and solutions are matched to when LeetCode accepted the submission, not to when a run found the accept. To get `accepted`, put your LeetCode username (from `leetcode.com/u/<username>`) in `.zed/leetcode-user.txt`. The file is git-ignored, and each run then reads your public list of recent accepts, with no login. A run prints `LeetCode accepted: <slug>` when it finds a new one.
 
 Every Alt+F7 run where all cases pass commits the solution, `cases/<slug>/` and `journey/`: `solve: <slug>` for a new version, `pass: <slug>` for a rerun. It then pushes in the background; if you're offline, the next push catches up.
 
@@ -117,7 +117,7 @@ Every Alt+F7 run where all cases pass commits the solution, `cases/<slug>/` and 
 
 `CLAUDE.md` tells a coding agent how to coach you here: hints before answers, reviews in a fixed format, and claims checked by running your code. Every run from a Zed key also saves its terminal output and a copy of the source to `build/runs/`, which keeps the last 50 and is git-ignored. The agent reads these with `.zed/lc-context.ps1`, so you can ask "why did that Alt+F7 fail" or "what's wrong at line 15" without pasting anything.
 
-The agent also records the hints, solutions and review scores it gives you, and keeps a memory about you: mistakes you repeat, strengths, coding style and goals, each with the problems behind it. The memory and weekly reads are in `journey/local/`, which is git-ignored. `.zed/lc-stats.ps1` counts results per tag, mistakes by kind, complexity changes and the review score trend. The agent uses it to answer "what's my weakness" or "how did my week go".
+The agent also records the hints, solutions and review scores it gives you, and keeps a memory about you: mistakes you repeat, strengths, coding style and goals, each with the problems behind it. The memory and weekly reads are in `journey/local/`, which is git-ignored. The hints, solutions and reviews (score, pattern and key idea) go into `events.jsonl`, so they're committed and pushed with the rest of the journey. `.zed/lc-stats.ps1` counts results per tag, mistakes by kind, complexity changes and the review score trend. The agent uses it to answer "what's my weakness" or "how did my week go".
 
 ## The journey view
 

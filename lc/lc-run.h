@@ -313,11 +313,12 @@ template <class T> long long items_in(const T& v) {
 }
 
 // Bench sizes, ascending: maxN, maxN/2, ... down to >= 8, at most 10. For a scalar size parameter with
-// maxN <= 64: up to 10 evenly spaced sizes from max(1, maxN/10) to maxN (ruling R5).
+// maxN <= 64 (ruling R5), or any maxN < 32, where halving would give fewer than 3 sizes: up to 10 evenly
+// spaced sizes from max(1, maxN/10) to maxN.
 inline std::vector<long long> bench_sizes(long long max_n, bool scalar) {
     std::vector<long long> v;
     max_n = std::max(max_n, 1LL);
-    if (scalar && max_n <= 64) {
+    if (max_n <= 64 && (scalar || max_n < 32)) {
         long long lo = std::max(1LL, max_n / 10), k = std::min(10LL, max_n - lo + 1);
         for (long long i = 0; i < k; ++i) {
             long long n = k == 1 ? max_n : lo + ((max_n - lo) * i * 2 + (k - 1)) / (2 * (k - 1));
