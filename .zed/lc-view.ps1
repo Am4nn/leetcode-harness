@@ -1,4 +1,4 @@
-# The journey view (Alt+F9): a read-only web page over journey/ and leetcode-solves/, served on
+# The journey view (Alt+F6): a read-only web page over journey/ and leetcode-solves/, served on
 # http://localhost:8790/. Every page load reads the files again, so it always shows the latest runs.
 #   (no args)   serve and open the page; when the port is taken (the view is already running), just open it
 #   -Json       print the page's data and exit (self-tests); with -Snap <slug>, that problem's code instead
@@ -164,7 +164,7 @@ $listener = New-Object Net.HttpListener
 $listener.Prefixes.Add($url)
 try { $listener.Start() }
 catch {
-    # The port is taken: the view is already running (a second Alt+F9), so just show it.
+    # The port is taken: the view is already running (a second Alt+F6), so just show it.
     if (-not $NoOpen) { Start-Process $url }
     exit 0
 }

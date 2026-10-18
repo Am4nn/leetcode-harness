@@ -110,7 +110,7 @@ Zed only reads key bindings from the user's global keymap, `%APPDATA%\Zed\keymap
     "ctrl-f7": ["task::Spawn", { "task_name": "Check C++ file (Ctrl+F7)" }],
     "alt-f7": ["task::Spawn", { "task_name": "LeetCode test (Alt+F7)" }],
     "alt-f8": ["task::Spawn", { "task_name": "LeetCode analyze (Alt+F8)" }],
-    "alt-f9": ["task::Spawn", { "task_name": "Journey view (Alt+F9)" }]
+    "alt-f6": ["task::Spawn", { "task_name": "Journey view (Alt+F6)" }]
   }
 }
 ```
