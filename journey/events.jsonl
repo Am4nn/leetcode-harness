@@ -1,0 +1,4 @@
+{"ts":"2026-10-18T17:03:15+05:30","event":"fetch","slug":"move-zeroes","file":"leetcode-solves/move-zeroes.cpp","src_hash":"43df37510035","ok":true,"id":"283","title":"Move Zeroes","difficulty":"Easy","tags":["Array","Two Pointers"],"paid_only":false}
+{"ts":"2026-10-18T17:03:38+05:30","event":"test_run","slug":"move-zeroes","file":"leetcode-solves/move-zeroes.cpp","src_hash":"43df37510035","compile_ok":true,"compile_ms":7011,"cases":[{"n":1,"status":"pass","ms":0.003},{"n":2,"status":"pass","ms":0}],"passed":2,"failed":0,"printed":0}
+{"ts":"2026-10-18T17:03:38+05:30","event":"solved","slug":"move-zeroes","file":"leetcode-solves/move-zeroes.cpp","src_hash":"43df37510035","attempts":1,"max_ms":0.003}
+{"ts":"2026-10-18T17:03:57+05:30","event":"note","slug":"move-zeroes","file":"leetcode-solves/move-zeroes.cpp","src_hash":"43df37510035","text":"Two Pointers"}
