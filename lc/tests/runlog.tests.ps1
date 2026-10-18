@@ -68,9 +68,9 @@
         $solves = Join-Path $tmp 'solves'
         New-Item -ItemType Directory -Force $solves | Out-Null
         $src = Join-Path $solves 'rotate-array.cpp'
-        [IO.File]::WriteAllText($src, "class Solution {`npublic:`n    void rotate(vector<int>& nums, int k) {`n        cout << `"dbg-print`" << endl;`n        nums[nums.size()] = k;`n    }`n};`n", $utf8)
+        [IO.File]::WriteAllText($src, "class Solution {`npublic:`n    void rotate(vector<int>& nums, int k) {`n        cerr << `"dbg-err`" << endl; cout << `"dbg-print`" << endl;`n        nums[nums.size()] = k;`n    }`n};`n", $utf8)
         $out = '' | powershell -NoProfile -ExecutionPolicy Bypass -File $lcPs1 -Mode test -NoWait -NoOpen -NoCommit -Offline -LogRun -JourneyRoot $journey -CasesRoot $cases $src 2>&1 | Out-String
-        Assert-Match $out 'dbg-print'  # still reaches the terminal
+        Assert-Match $out 'dbg-err\r?\ndbg-print'  # still reaches the terminal, in the order printed
         $logs = Get-Logs
         Assert-Equal $logs.Count 50 'runlog: kept runs'
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $runs '20000101-000000-000-old-alt-f7.cpp'))) 'runlog: oldest source copy left behind'
@@ -79,7 +79,7 @@
         $text = [IO.File]::ReadAllText($log.FullName)
         Assert-Match $text '(?m)^key: Alt\+F7$'
         Assert-Match $text ('(?m)^file: ' + [regex]::Escape($src) + '$')
-        Assert-Match $text 'dbg-print'
+        Assert-Match $text 'dbg-err\r?\ndbg-print'  # cerr merged into stdout's pipe keeps the order
         Assert-Match $text 'CRASH 1'
         Assert-Match $text 'crashed at\s+line 5\b'
         Assert-Equal ([IO.File]::ReadAllText(($log.FullName -replace '\.log$', '.cpp'))) ([IO.File]::ReadAllText($src)) 'runlog: source copy'
@@ -215,6 +215,13 @@
         Assert-True (-not $r.TimedOut) 'runlog: Shift+F7 with a big input.txt hung'
         Assert-Match $r.Out 'sum=200010000'
         Assert-Match ([IO.File]::ReadAllText((Get-Logs)[-1].FullName)) '(?m)^40000\r?\nsum=200010000'
+
+        # cout and cerr lines stay in the order printed, in the terminal and the log
+        [IO.File]::WriteAllText($progSrc, "#include <iostream>`nint main() { for (int i = 0; i < 3; i++) { std::cout << `"out `" << i << '\n'; std::cerr << `"err `" << i << '\n'; } }`n", $utf8)
+        $r = Invoke-PsTimed @($runCpp, '-Mode', 'input', '-LogRun', $progSrc) 60000
+        $order = 'out 0\r?\nerr 0\r?\nout 1\r?\nerr 1\r?\nout 2\r?\nerr 2'
+        Assert-Match $r.Out $order
+        Assert-Match ([IO.File]::ReadAllText((Get-Logs)[-1].FullName)) $order
 
         # Ctrl+F7: g++ errors are logged
         [IO.File]::WriteAllText($progSrc, "int main() { return undefined_name; }`n", $utf8)

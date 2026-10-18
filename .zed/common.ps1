@@ -42,7 +42,9 @@ function Explain([int]$code) {
 # -NoStdout discards the program's stdout (LeetCode analyze: debug prints would flood the terminal).
 # -TeeTo: the program's stdout and stderr still reach the terminal and are also copied to this stream (the
 # run log). Piped stdout is fully buffered, so the program should make it unbuffered (lc/lc-unbuffered.h)
-# or prints before a crash are lost.
+# or prints before a crash are lost. Two pipes read one after the other lose the order of cout and cerr
+# lines, so the program also gets LC_STDERR_TO_STDOUT=1 and points its stderr at stdout's pipe (the
+# headers above and lc-run.h do); the stderr pipe stays pumped for anything written before that.
 function Start-Measured {
     param(
         [Parameter(Mandatory)][string]$Exe,
@@ -62,6 +64,7 @@ function Start-Measured {
     $psi.RedirectStandardInput = [bool]$StdinFile
     $psi.RedirectStandardOutput = $NoStdout -or $tee
     $psi.RedirectStandardError = $tee
+    if ($tee) { $psi.EnvironmentVariables['LC_STDERR_TO_STDOUT'] = '1' }
     # Otherwise .NET writes a UTF-8 BOM (ef bb bf) before the file and the first cin >> fails.
     if ($StdinFile) { [Console]::InputEncoding = New-Object Text.UTF8Encoding $false }
     $p = [Diagnostics.Process]::Start($psi)
