@@ -1,16 +1,31 @@
 class Solution {
 public:
   int majorityElement(vector<int> &nums) {
-    unordered_map<int, int> counter;
-    pair<int, int> majorityElement = {-1, -1}; // element, counter
+    int count = 0, candidate = 0;
 
-    for (int element : nums) {
-      ++counter[element];
-      if (majorityElement.second < counter[element]) {
-        majorityElement = {element, counter[element]};
+    // 1 on 1 duel with each element
+    for (size_t i = 0; i < nums.size(); i++) {
+      if (count == 0) {
+        candidate = i;
+        ++count;
+      } else if (nums[candidate] != nums[i]) {
+        --count;
+      } else {
+        ++count;
       }
     }
 
-    return majorityElement.first;
+    // Check if the candidate is in majority
+    int candidateCount = 0;
+    for (int element : nums) {
+      if (nums[candidate] == element)
+        ++candidateCount;
+    }
+
+    if (candidateCount > floor(nums.size() / 2)) {
+      return nums[candidate];
+    }
+
+    return -1;
   }
 };
