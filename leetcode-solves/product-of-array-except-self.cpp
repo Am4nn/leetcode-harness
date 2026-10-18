@@ -1,7 +1,7 @@
 class Solution {
 public:
   vector<int> productExceptSelf(vector<int> &nums) {
-    int numSize = (int)nums.size();
+    int numSize = nums.size();
     vector<int> prefixProduct(numSize), suffixProduct(numSize),
         productArray(numSize);
 
