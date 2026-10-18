@@ -39,10 +39,9 @@ $inv = [Globalization.CultureInfo]::InvariantCulture
 # $env:LC_ACCEPTED_RESPONSE (a JSON file used instead of the network).
 $acTask = $null
 if (-not $Offline) {
-    $acUserFile = $env:LC_USER_FILE
-    if (-not $acUserFile) { $acUserFile = Join-Path $PSScriptRoot 'leetcode-user.txt' }
-    $acTask = Start-LcAcceptedFetch -UserFile $acUserFile -ResponsePath $env:LC_ACCEPTED_RESPONSE
+    $acTask = Start-LcAcceptedFetch -UserFile (Get-LcUserFile) -ResponsePath $env:LC_ACCEPTED_RESPONSE
 }
+$acTracked = Test-LcAcceptsTracked (Get-LcUserFile)  # a username is set: an unaccepted problem can count as failed
 
 # Writes an accepted event for each new LeetCode accept of a problem the journey knows, updates those
 # rows of journey.md and prints one line naming them. Silent when there are none or anything fails.
@@ -61,8 +60,8 @@ function Complete-LcAccepted {
         if (-not $new.Count) { return }
         $slugs = @($new | ForEach-Object { $_.slug } | Select-Object -Unique)
         if ($null -ne $script:events) { foreach ($e in $new) { if ($e.slug -eq $slug) { [void]$script:events.Add($e) } } }
-        if ($stale) { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $problemsDir }
-        else { foreach ($s in $slugs) { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $problemsDir -Slug $s } }
+        if ($stale) { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $problemsDir -AcceptsTracked $acTracked }
+        else { foreach ($s in $slugs) { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $problemsDir -AcceptsTracked $acTracked -Slug $s } }
         Write-Host "LeetCode accepted: $($slugs -join ', ')" -ForegroundColor DarkGray
     } catch { }
 }
@@ -83,10 +82,18 @@ function Add-LcEvent([string]$Name, [Collections.IDictionary]$Data = @{}) {
 }
 
 # Records a run's results (and the case that never finished) in this run's test_run.
-function Add-LcRunCases($run, [int]$FirstN = 1) {
+# $List is the case list the run was given: a failed case keeps its input, expected and got (cut to 200).
+function Add-LcRunCases($run, [int]$FirstN = 1, $List = @()) {
     foreach ($r in $run.Results) {
         $c = [ordered]@{ n = $FirstN + [int]$r.n - 1; status = [string]$r.status }
         if ($null -ne $r.ms) { $c.ms = [double]$r.ms }
+        if ($r.status -eq 'fail') {
+            $i = [int]$r.n - 1
+            if ($i -ge 0 -and $i -lt @($List).Count) { $c.input = Limit-LcText ((@($List[$i].Args)) -join ', ') }
+            $c.expected = Limit-LcText ([string]$r.expected)
+            $c.got = Limit-LcText ([string]$r.got)
+        }
+        elseif ($r.status -eq 'error') { $c.error = Limit-LcText ([string]$r.error) }
         [void]$script:jRun.Cases.Add($c)
     }
     if ($null -ne $run.Pending) { [void]$script:jRun.Cases.Add([ordered]@{ n = $FirstN + $run.Pending - 1; status = 'crash' }) }
@@ -104,6 +111,7 @@ function Complete-LcJourney([int]$code) {
         failed  = @($cases | Where-Object { $_.status -eq 'fail' -or $_.status -eq 'error' }).Count
         printed = @($cases | Where-Object { $_.status -eq 'print' }).Count
     }
+    if ($r.CompileError) { $data.compile_error = $r.CompileError }
     if ($r.Crash) { $data.crash = $r.Crash }
     if ($mismatch) { $data.mismatch = $true }  # the solution's method isn't the problem's
     Add-LcEvent 'test_run' $data
@@ -137,8 +145,8 @@ function Complete-LcJourney([int]$code) {
 
 # journey.md: this slug's row, or everything when events.jsonl was newer than journey.md (R31).
 function Update-LcJourney {
-    if ($script:jStale) { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $problemsDir }
-    else { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $problemsDir -Slug $slug -Events $script:events }
+    if ($script:jStale) { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $problemsDir -AcceptsTracked $acTracked }
+    else { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $problemsDir -AcceptsTracked $acTracked -Slug $slug -Events $script:events }
 }
 
 # A failed build: one line for a parameter type the harness can't handle, else g++'s output.
@@ -476,11 +484,17 @@ if ($info.Kind -eq 'function' -and $cases.Count -gt 0) {
 # ---- build ----
 $harnessText = New-LcHarnessText -Info $info
 $userText = New-LcUserText -SrcPath $src -Info $info
-$jRun = @{ CompileOk = $false; CompileMs = 0; Cases = New-Object Collections.ArrayList; Crash = $null; AllPass = $false; MaxMs = 0 }
+$jRun = @{ CompileOk = $false; CompileError = ''; CompileMs = 0; Cases = New-Object Collections.ArrayList; Crash = $null; AllPass = $false; MaxMs = 0 }
 $build = Build-LcExe -SrcPath $src -HarnessText $harnessText -UserText $userText -Flavor test
 $jRun.CompileOk = [bool]$build.Ok
 $jRun.CompileMs = $build.Ms
-if (-not $build.Ok) { Write-LcBuildFailure $build; Exit-Lc 1 }
+if (-not $build.Ok) {
+    # The first g++ error as "line N: message" (journey: compile_error).
+    $first = @(Format-LcGppDiagnostics (Remove-LcUserTuLines $build.Errors) $src | Where-Object { $_.Label -eq 'error' })[0]
+    if ($first) { $jRun.CompileError = Limit-LcText ([string]$first.Text) }
+    Write-LcBuildFailure $build
+    Exit-Lc 1
+}
 Write-LcBuildWarnings $build
 Write-LcGap  # the results group
 
@@ -602,7 +616,7 @@ if ($cases.Count -eq 0) {
             Add-LcEvent 'typed_case' @{ input = $line }
         }
         $run = Invoke-LcCases @(@{ Args = [string[]]$vals; Expected = $null })
-        Add-LcRunCases $run -FirstN $k
+        Add-LcRunCases $run -FirstN $k -List @(@{ Args = [string[]]$vals })
         Write-LcResults $run.Results -FirstN $k
         if (@($run.Results | Where-Object { $_.status -eq 'error' }).Count) { $code = 1 }
         if (Write-LcStop $run -FirstN $k) { Exit-Lc 1 }
@@ -613,7 +627,7 @@ if ($cases.Count -eq 0) {
 }
 
 $run = Invoke-LcCases $cases
-Add-LcRunCases $run
+Add-LcRunCases $run -List $cases
 Write-LcResults $run.Results
 if (Write-LcStop $run) { Exit-Lc 1 }
 

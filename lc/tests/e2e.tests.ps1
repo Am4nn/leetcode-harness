@@ -551,6 +551,28 @@
         Assert-True ($r.Out -notmatch 'LeetCode accepted') "e2e: second run printed accepts`n$($r.Out)"
         Assert-Equal (& $countAc) 1 'e2e: second run duplicated the accepted event'
 
+        # e2e: a failed case keeps its input, expected and got in the test_run
+        $fc = Join-Path $tmp 'fail-cases'
+        New-Item -ItemType Directory -Force (Join-Path $fc 'climbing-stairs') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $fc 'climbing-stairs\cases.txt'), "Input: n = 7`nOutput: 21`n", $utf8)
+        $r = Invoke-Lc (Join-Path $tmp 'bugged\climbing-stairs.cpp') -Cases $fc
+        Assert-Equal $r.Code 1 "e2e: bugged climbing-stairs exit code`n$($r.Out)"
+        $tr = @(Read-LcEvents $journey -Slug 'climbing-stairs' | Where-Object { $_.event -eq 'test_run' })[-1]
+        $fcase = @($tr.cases | Where-Object { $_.status -eq 'fail' })[0]
+        Assert-True ($fcase -and $fcase.input -and $fcase.expected -and $fcase.got) "e2e: failed case fields $($tr | ConvertTo-Json -Compress -Depth 6)"
+        Assert-Equal $fcase.input '7'
+        Assert-Equal $fcase.expected '21'
+
+        # e2e: a build failure keeps the first compiler error as "line N: message"
+        $ce = Join-Path $tmp 'cerr'
+        New-Item -ItemType Directory -Force $ce | Out-Null
+        [IO.File]::WriteAllText((Join-Path $ce 'climbing-stairs.cpp'), "class Solution {`npublic:`n    int climbStairs(int n) { return n +; }`n};`n", $utf8)
+        $r = Invoke-Lc (Join-Path $ce 'climbing-stairs.cpp') -Cases $fc
+        Assert-Equal $r.Code 1 "e2e: syntax error exit code`n$($r.Out)"
+        $tr = @(Read-LcEvents $journey -Slug 'climbing-stairs' | Where-Object { $_.event -eq 'test_run' })[-1]
+        Assert-True ($tr.compile_ok -eq $false) "e2e: compile_ok $($tr | ConvertTo-Json -Compress -Depth 6)"
+        Assert-Match ([string]$tr.compile_error) '^line \d+: '
+
         # e2e: the real dsa/journey was never written
         if (Test-Path -LiteralPath $realEvents) {
             $tmpJson = $tmp.Replace('\', '/')

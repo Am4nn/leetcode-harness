@@ -1,7 +1,27 @@
 # Journey: event log, attempts, snapshots, journey.md, solve commit.
 # Function library: dot-source it. No side effects, no output.
 
+$script:LcJourneyDsaRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+
 function New-LcUtf8 { New-Object Text.UTF8Encoding $false }
+
+# Cuts a value to $Max characters: the first Max-3, then '...'.
+function Limit-LcText([string]$Text, [int]$Max = 200) {
+    if ($Text.Length -le $Max) { return $Text }
+    return $Text.Substring(0, $Max - 3) + '...'
+}
+
+# The LeetCode username file: $env:LC_USER_FILE (self-tests), else .zed/leetcode-user.txt (git-ignored).
+function Get-LcUserFile {
+    if ($env:LC_USER_FILE) { return $env:LC_USER_FILE }
+    return Join-Path (Join-Path $script:LcJourneyDsaRoot '.zed') 'leetcode-user.txt'
+}
+
+# True when LeetCode accepts can be read: the user file exists with something in it.
+function Test-LcAcceptsTracked([string]$UserFile) {
+    if (-not $UserFile -or -not [IO.File]::Exists($UserFile)) { return $false }
+    return [bool][IO.File]::ReadAllText($UserFile).Trim()
+}
 
 function Get-LcNow { Get-Date -Format 'yyyy-MM-ddTHH:mm:sszzz' }
 
@@ -133,7 +153,7 @@ function Save-LcSnapshot([string]$Root, [string]$Slug, [string]$SrcPath, [string
         ([IO.File]::ReadAllText($lastFile).Trim() -eq $SrcHash)) { return $null }
     New-Item -ItemType Directory -Force $dir | Out-Null
     $stamp = ($Ts.Substring(0, [Math]::Min(19, $Ts.Length)) -replace '[-:]', '') -replace 'T', '-'
-    $dest = Join-Path $dir "$stamp.cpp"
+    $dest = Join-Path $dir "$stamp-$SrcHash.cpp"
     Copy-Item -LiteralPath $SrcPath -Destination $dest -Force
     [IO.File]::WriteAllText($lastFile, $SrcHash, (New-LcUtf8))
     return $dest
@@ -145,11 +165,23 @@ function Get-LcJourneyState($Events) {
     foreach ($e in @($Events)) {
         $slug = [string]$e.slug
         $r = $by[$slug]
-        if ($null -eq $r) { $r = @{ Runs = 0; Since = 0; Solved = $null; Accepted = $false; Cx = ''; Note = ''; Fetch = $null }; $by[$slug] = $r }
+        if ($null -eq $r) {
+            $r = @{ Runs = 0; Since = 0; Solved = $null; Accepted = $false; AcceptedAt = $null; Hint = $false; Solution = $false
+                    First = $null; Cx = ''; Note = ''; Fetch = $null }
+            $by[$slug] = $r
+            try { $r.First = [DateTimeOffset]::Parse([string]$e.ts, [Globalization.CultureInfo]::InvariantCulture).LocalDateTime } catch { }
+        }
         switch ([string]$e.event) {
             'test_run'    { $r.Runs++; $r.Since++ }
             'solved'      { $r.Since = 0; if ($null -eq $r.Solved) { $r.Solved = $e } }
-            'accepted'    { $r.Accepted = $true }
+            'accepted'    {
+                if (-not $r.Accepted) {
+                    try { $r.AcceptedAt = [DateTimeOffset]::Parse([string]$e.ts, [Globalization.CultureInfo]::InvariantCulture).LocalDateTime } catch { }
+                }
+                $r.Accepted = $true
+            }
+            'hint'        { if (-not $r.Accepted) { $r.Hint = $true } }  # a hint after the first accept doesn't count
+            'solution'    { $r.Solution = $true }
             'analyze_run' { if ($e.complexity) { $r.Cx = [string]$e.complexity } }  # a failed analyze has none
             'note'        { $r.Note = [string]$e.text }
             'fetch'       { if ($e.ok -eq $true) { $r.Fetch = $e } }
@@ -158,8 +190,25 @@ function Get-LcJourneyState($Events) {
     return $by
 }
 
+# A problem's status (docs/2026-10-18-coach-design.md), computed on demand and never stored. $State is one
+# slug's entry from Get-LcJourneyState; it reads these fields:
+#   Solution (bool)   a solution event exists
+#   Accepted (bool)   LeetCode accepted it
+#   Hint (bool)       a hint event came before the first accept
+#   First (datetime)  the slug's first event, or $null
+#   Solved            the first solved event, or $null (passed locally)
+# $AcceptsTracked: a LeetCode username is set, so a missing accept counts against the problem.
+function Get-LcProblemStatus($State, [bool]$AcceptsTracked = $false, [datetime]$Now = (Get-Date)) {
+    $r = $State
+    if ($r.Solution) { return 'failed' }
+    if ($r.Accepted) { if ($r.Hint) { return 'accepted with hints' }; return 'accepted' }
+    if ($r.First -and ($Now - $r.First).TotalDays -ge 7 -and ($AcceptsTracked -or -not $r.Solved)) { return 'failed' }
+    if ($r.Solved) { return 'passed locally' }
+    return 'attempted'
+}
+
 # One journey.md row, or $null for a slug without a test_run.
-function Format-LcJourneyRow([string]$Slug, $State, [string]$MetaDir) {
+function Format-LcJourneyRow([string]$Slug, $State, [string]$MetaDir, [bool]$AcceptsTracked = $false, [datetime]$Now = (Get-Date)) {
     $r = $State
     if (-not $r -or -not $r.Runs) { return $null }
     $date = '-'; $maxTime = ''; $attempts = $r.Since
@@ -190,9 +239,7 @@ function Format-LcJourneyRow([string]$Slug, $State, [string]$MetaDir) {
         if ($q.tags) { $tags = (@($q.tags) -join ', ') }
     }
     $esc = { param($s) ([string]$s) -replace '\|', '\|' -replace "[\r\n]+", ' ' }
-    # Status: LeetCode accepted it, else every local case passed once, else only tried.
-    $status = 'attempted'
-    if ($r.Accepted) { $status = 'accepted' } elseif ($r.Solved) { $status = 'passed locally' }
+    $status = Get-LcProblemStatus $r $AcceptsTracked $Now
     return '| {0} | {1} | [{2}](https://leetcode.com/problems/{3}/) | {4} | {5} | {6} | {7} | {8} | {9} | {10} |' -f `
         $date, $id, (& $esc $title), $Slug, $status, $diff, (& $esc $tags), (& $esc $r.Cx), $maxTime, $attempts, (& $esc $r.Note)
 }
@@ -200,7 +247,8 @@ function Format-LcJourneyRow([string]$Slug, $State, [string]$MetaDir) {
 # Regenerates journey.md from the events (-Events: the list when the caller already has it).
 # -Slug: only that slug's events changed, so only its row is rebuilt (in place, or appended when new);
 # -Events then needs only that slug's events. With no usable journey.md yet, it regenerates everything.
-function Update-LcJourneyFile([string]$Root, [string]$MetaDir = '', $Events = $null, [string]$Slug = '') {
+function Update-LcJourneyFile([string]$Root, [string]$MetaDir = '', $Events = $null, [string]$Slug = '',
+                              [bool]$AcceptsTracked = $false, [datetime]$Now = (Get-Date)) {
     if (-not $MetaDir) { $MetaDir = Join-Path $Root 'problems' }
     $header = @('| Date | # | Problem | Status | Difficulty | Tags | Complexity | Max time | Attempts | Note |',
                 '|---|---|---|---|---|---|---|---|---|---|')
@@ -212,7 +260,7 @@ function Update-LcJourneyFile([string]$Root, [string]$MetaDir = '', $Events = $n
         if ($null -eq $Events) { $Events = Read-LcEvents $Root -Slug $Slug }
         $mine = @(foreach ($e in @($Events)) { if ($e.slug -eq $Slug) { $e } })
         $st = Get-LcJourneyState $mine
-        $row = Format-LcJourneyRow $Slug $st[$Slug] $MetaDir
+        $row = Format-LcJourneyRow $Slug $st[$Slug] $MetaDir $AcceptsTracked $Now
         $link = "](https://leetcode.com/problems/$Slug/) |"
         $placed = $false
         foreach ($l in $old) {
@@ -225,7 +273,7 @@ function Update-LcJourneyFile([string]$Root, [string]$MetaDir = '', $Events = $n
         foreach ($h in $header) { $lines.Add($h) }
         $state = Get-LcJourneyState $Events
         foreach ($s in @($state.Keys)) {
-            $row = Format-LcJourneyRow $s $state[$s] $MetaDir
+            $row = Format-LcJourneyRow $s $state[$s] $MetaDir $AcceptsTracked $Now
             if ($row) { $lines.Add($row) }
         }
     }
