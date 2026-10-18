@@ -1,7 +1,16 @@
 #include "tests/check.h"
 #include "lc.h"
 
+// Bench calls that saw an input or a Solution an earlier call had already used.
+static long long reused = 0;
+
 struct Solution {
+    int used = 0;
+    int consume(vector<int>& nums) {
+        if (used++ || nums.empty()) ++reused;
+        nums.clear();
+        return 0;
+    }
     long long sum(vector<int>& nums) {
         long long s = 0;
         for (int x : nums) s += x;
@@ -420,11 +429,38 @@ int main(int, char** argv) {
         CHECK_EQ((size_t)starts, s.size());
     }
 
-    // R17: tree inputs cap reps so generated nodes per size stay within 2,000,000.
+    // R17: tree inputs cap timed calls (the lone first call, then reps x batch) so generated nodes per size
+    // stay within 2,000,000, batched or not.
+    auto calls = [](const string& l) {
+        double b = num(l, "batch");
+        return std::isnan(b) ? num(l, "reps") : 1 + num(l, "reps") * b;
+    };
     {
         auto r = run("bench", "size root\nparam root len 1 100000\n", bench_flags, fn(&Rec::maxDepth, {"root"}));
         auto s = size_lines(r);
-        CHECK(!s.empty() && num(s.back(), "n") == 100000.0 && num(s.back(), "reps") <= 19);
+        CHECK(!s.empty() && num(s.back(), "n") == 100000.0 && calls(s.back()) <= 19);
+        r = run("bench", "size root\nparam root len 1 2000\n", bench_flags, fn(&Rec::maxDepth, {"root"}));
+        s = size_lines(r);
+        CHECK(!s.empty() && num(s.back(), "n") == 2000.0 && num(s.back(), "batch") >= 2);
+        for (auto& l : s) CHECK(calls(l) <= 2000000 / num(l, "n") - 1);
+    }
+
+    // Fast calls are timed in batches and reported per call: an O(n) sum then grows with n, and a batch
+    // takes about 1 ms. Every call gets a fresh input and a fresh Solution (consume clears its input).
+    {
+        auto r = run("bench", "size nums\nparam nums len 1 4096\n", bench_flags, fn(&Solution::sum, {"nums"}));
+        auto s = size_lines(r);
+        CHECK_EQ(s.size(), 10u);
+        for (auto& l : s) CHECK(num(l, "batch") >= 2 && num(l, "reps") >= 1 && num(l, "reps") <= 10);
+        if (s.size() == 10u) {
+            CHECK(num(s.back(), "ms") > 4 * num(s[s.size() - 4], "ms"));  // 4096 vs 512
+            CHECK(num(s.back(), "ms") * num(s.back(), "batch") >= 0.5);
+        }
+        CHECK(!r.empty() && has(r.back(), "\"alloc\":{") && num(r.back(), "count") == 0);
+        r = run("bench", "size nums\nparam nums len 1 4096\n", bench_flags, fn(&Solution::consume, {"nums"}));
+        s = size_lines(r);
+        CHECK(!s.empty() && num(s.back(), "batch") >= 2);
+        CHECK_EQ(reused, 0LL);
     }
 
     // Usage errors.

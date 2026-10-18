@@ -149,6 +149,7 @@ Runs in its own build without the debug checks (plain `-O2`), so timing is close
 - **Complexity estimate:**
   - Time the solution at doubling sizes up to the constraint maximum. Fit the growth and report the closest of O(1), O(log n), O(n), O(n log n), O(n^2), O(n^3), O(2^n) (ASCII labels), with the measured times.
   - Cap each run at ~2 s and extrapolate past the cap.
+  - Time a call shorter than ~1 ms in batches of about 1 ms (each call on a fresh input prepared outside the timed part, within the node budget) and report the time per call, so microsecond calls aren't timer noise.
   - State plainly that random inputs can miss the worst case.
 - **TLE warning:** the measured or extrapolated time at the maximum constraint, compared against a ~1 s budget, e.g. `n = 10^5 → est. 4.2 s: likely TLE`.
 - **Allocations:** a global `operator new`/`delete` override in `lc.h` reports allocation count, total bytes, and peak live bytes at the largest size.
