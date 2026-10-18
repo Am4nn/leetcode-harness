@@ -72,11 +72,12 @@ function Resolve-LcRunFile([string]$Name) {
     return Join-Path $dsaRoot $Name
 }
 
-# My .cpp files, newest saved first: the ones in folders under $UserRoot, minus the harness's own folders.
+# My .cpp files, newest saved first: the ones in folders under $UserRoot, minus the harness's own folders
+# and hidden ones (.claude holds agents' worktrees, with copies of my files).
 function Get-LcUserCpp {
-    $skip = @('build', 'journey', 'lc', 'cases', '.git', '.zed', '.superpowers', 'docs')
+    $skip = @('build', 'journey', 'lc', 'cases', 'docs')
     $runsDir = $runsRoot.TrimEnd('\') + '\'
-    return @(Get-ChildItem -LiteralPath $UserRoot -Directory | Where-Object { $_.Name -notin $skip } |
+    return @(Get-ChildItem -LiteralPath $UserRoot -Directory | Where-Object { $_.Name -notin $skip -and -not $_.Name.StartsWith('.') } |
         ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -Recurse -Filter '*.cpp' -File -ErrorAction SilentlyContinue } |
         Where-Object { -not $_.FullName.StartsWith($runsDir, [StringComparison]::OrdinalIgnoreCase) } |
         Sort-Object LastWriteTime -Descending)
