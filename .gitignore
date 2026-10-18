@@ -13,3 +13,6 @@ build/
 
 # Coach memory and weekly reads (private; written by .zed/lc-coach.ps1)
 journey/local/
+
+# Worktrees of parallel Claude Code agents
+.claude/worktrees/

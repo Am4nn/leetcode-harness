@@ -133,6 +133,13 @@
         Assert-Equal ([IO.File]::ReadAllText((Join-Path $local 'weekly\2026-10-19.md'))) '# w'
         $null = Invoke-Coach @('weekly', '-Text', '# w2') '2026-10-25'
         Assert-Equal ([IO.File]::ReadAllText((Join-Path $local 'weekly\2026-10-19.md'))) '# w2'
+
+        # -TextFile: double quotes and several lines survive (a command-line -Text would lose the quotes)
+        $tf = Join-Path $tmp 'read.md'
+        [IO.File]::WriteAllText($tf, "# Week`n`nSaid `"off by one`" twice.`n", (New-Object Text.UTF8Encoding $false))
+        $r = Invoke-Coach @('weekly', '-TextFile', $tf) '2026-10-28'
+        Assert-Equal $r.Code 0 "memory: weekly -TextFile`n$($r.Out)"
+        Assert-Equal ([IO.File]::ReadAllText((Join-Path $local 'weekly\2026-10-26.md'))).Replace("`r", '') "# Week`n`nSaid `"off by one`" twice."
     } finally {
         Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
     }

@@ -5,6 +5,8 @@
 #   review -Slug s -Score 1-10 -Label Poor|Fair|Good|Great -Pattern p
 #   remember -Kind k -Text t [-Evidence 'slug:ref',...] [-Source coach|user] [-Until yyyy-MM-dd] [-Replaces id]
 #   forget|resolve -Id id     edit -Id id -Text t     memory     read -Slug s     weekly -Text markdown
+# -TextFile <path> reads -Text from a UTF-8 file: PS 5.1 drops double quotes inside command-line arguments,
+# so text with quotes or several lines (a weekly read) goes through a file.
 [CmdletBinding(PositionalBinding = $false)]
 param(
     [Parameter(Position = 0, Mandatory = $true)]
@@ -16,6 +18,7 @@ param(
     [string]$Pattern = '',
     [string]$Kind = '',
     [string]$Text = '',
+    [string]$TextFile = '',
     [string[]]$Evidence = @(),
     [ValidateSet('coach', 'user')][string]$Source = 'coach',
     [string]$Until = '',
@@ -31,6 +34,7 @@ param(
 $dsaRoot = Split-Path -Parent $PSScriptRoot
 if (-not $JourneyRoot) { $JourneyRoot = Join-Path $dsaRoot 'journey' }
 if (-not $SolutionsRoot) { $SolutionsRoot = Join-Path $dsaRoot 'leetcode-solves' }
+if ($TextFile) { $Text = [IO.File]::ReadAllText($TextFile, [Text.Encoding]::UTF8).Trim() }
 $nowDt = if ($Now) { [DateTimeOffset]::Parse($Now, [Globalization.CultureInfo]::InvariantCulture).LocalDateTime } else { Get-Date }
 
 $A = @{

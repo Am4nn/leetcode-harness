@@ -57,7 +57,7 @@ Pattern: <name>.  Related: <2-3 problems with the same pattern that aren't in jo
 (`-Mode analyze` gives complexity and TLE risk.) Without `-LogRun` the check isn't logged, so it doesn't replace my latest run.
 
 ## Records and memory
-Run these as `powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc-coach.ps1 <command> ...`. Each prints one line; none of them commit.
+Run these as `powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc-coach.ps1 <command> ...`. Each prints one line; none of them commit. Text with double quotes or several lines must go through a file: write it to a temp file and pass `-TextFile <path>` in place of `-Text`.
 - **Record what you gave:**
   - after each hint from the hint ladder: `hint -Slug <slug>`;
   - after showing the full solution: `solution -Slug <slug>`;
@@ -83,7 +83,7 @@ Run these as `powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc-coach.
 - **Weekly read,** only when I ask how my week went:
   - run `lc-stats.ps1 -Since <this Monday>` and read the memory;
   - write at most 180 words: what went well, what slipped, and one thing to focus on, each backed by numbers or problems;
-  - save it with `weekly -Text "<the read>"`.
+  - save it with `weekly -TextFile <path>`.
 - **What to work on.** Describe how I've been doing. Suggest what to focus on only when I ask, and base it on my `goal` facts and stats.
 
 ## How to write
