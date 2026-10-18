@@ -12,7 +12,7 @@
   {
     "label": "Run C++ file (F7)",
     "command": "powershell",
-    "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".zed/run-cpp.ps1", "-Mode", "run", "$ZED_FILE"],
+    "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".zed/run-cpp.ps1", "-Mode", "run", "-LogRun", "$ZED_FILE"],
     "cwd": "$ZED_WORKTREE_ROOT",
     "use_new_terminal": false,
     "allow_concurrent_runs": false,
@@ -22,7 +22,7 @@
   {
     "label": "Run C++ file with input.txt (Shift+F7)",
     "command": "powershell",
-    "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".zed/run-cpp.ps1", "-Mode", "input", "$ZED_FILE"],
+    "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".zed/run-cpp.ps1", "-Mode", "input", "-LogRun", "$ZED_FILE"],
     "cwd": "$ZED_WORKTREE_ROOT",
     "use_new_terminal": false,
     "allow_concurrent_runs": false,
@@ -32,7 +32,7 @@
   {
     "label": "Check C++ file (Ctrl+F7)",
     "command": "powershell",
-    "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".zed/run-cpp.ps1", "-Mode", "check", "$ZED_FILE"],
+    "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".zed/run-cpp.ps1", "-Mode", "check", "-LogRun", "$ZED_FILE"],
     "cwd": "$ZED_WORKTREE_ROOT",
     "use_new_terminal": false,
     "allow_concurrent_runs": false,
@@ -42,7 +42,7 @@
   {
     "label": "LeetCode test (Alt+F7)",
     "command": "powershell",
-    "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".zed/lc.ps1", "-Mode", "test", "$ZED_FILE"],
+    "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".zed/lc.ps1", "-Mode", "test", "-LogRun", "$ZED_FILE"],
     "cwd": "$ZED_WORKTREE_ROOT",
     "use_new_terminal": false,
     "allow_concurrent_runs": false,
@@ -52,7 +52,7 @@
   {
     "label": "LeetCode analyze (Alt+F8)",
     "command": "powershell",
-    "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".zed/lc.ps1", "-Mode", "analyze", "$ZED_FILE"],
+    "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".zed/lc.ps1", "-Mode", "analyze", "-LogRun", "$ZED_FILE"],
     "cwd": "$ZED_WORKTREE_ROOT",
     "use_new_terminal": false,
     "allow_concurrent_runs": false,

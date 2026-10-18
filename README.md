@@ -112,6 +112,10 @@ Status is `accepted` once LeetCode has accepted a submission, `passed locally` w
 
 Every Alt+F7 run where all cases pass commits the solution, `cases/<slug>/` and `journey/`: `solve: <slug>` for a new version, `pass: <slug>` for a rerun. It then pushes in the background; if you're offline, the next push catches up.
 
+## Asking a coding agent
+
+`CLAUDE.md` tells a coding agent how to coach you here: hints before answers, reviews in a fixed format, and claims checked by running your code. Every run from a Zed key also saves its terminal output and a copy of the source to `build/runs/`, which keeps the last 50 and is git-ignored. The agent reads these with `.zed/lc-context.ps1`, so you can ask "why did that Alt+F7 fail" or "what's wrong at line 15" without pasting anything.
+
 ## Speed
 
 Measured on my laptop: about 3 s from saving an edit to seeing results, and 1.4 s to rerun without changes. The first run of a new problem takes longer because it compiles the harness part once. After that, each edit recompiles only your solution file.
@@ -126,7 +130,7 @@ journey/                  event log, journey.md, snapshots, cached problem data
 lc/                       C++ harness headers + self-tests
 .zed/                     the scripts behind every key, and tasks.json
 .clangd                   makes clangd know TreeNode/ListNode
-build/                    compiled output (git-ignored)
+build/                    compiled output and runs/ (the run logs); git-ignored
 ```
 
 ## Changing things

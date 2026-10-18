@@ -131,6 +131,8 @@ inline int parse_cli(int argc, char** argv, Cli& cli) {
         cli.in = argv[2];
         cli.out = argv[3];
         cli.any_order = argc == 5;
+        // The run log pipes stdout, and a piped stdout is fully buffered: prints before a crash would be lost.
+        std::setvbuf(stdout, nullptr, _IONBF, 0);
         return 0;
     }
     bool bench = cli.mode == "bench", gen = cli.mode == "gen", profile = cli.mode == "profile";

@@ -5,15 +5,30 @@
 # Files without main() (LeetCode style) are always just checked.
 param(
     [ValidateSet('run', 'input', 'check')][string]$Mode = 'run',
+    [switch]$LogRun,  # save this run's output for .zed/lc-context.ps1 (the Zed tasks pass it)
     # The path may arrive split on spaces ("c++ language"), so take all remaining args.
     [Parameter(ValueFromRemainingArguments)][string[]]$Rest
 )
 
 . (Join-Path $PSScriptRoot 'common.ps1')
+. (Join-Path $PSScriptRoot 'lc\runlog.ps1')
 
 $src = ($Rest -join ' ').Trim('"')
 if (-not $src -or -not (Test-Path -LiteralPath $src)) { Write-Host "No such file: '$src'" -ForegroundColor Red; Finish 1 }
 if ([IO.Path]::GetExtension($src) -ne '.cpp') { Write-Host "Not a .cpp file: $src" -ForegroundColor Red; Finish 1 }
+$src = (Resolve-Path -LiteralPath $src).ProviderPath
+if ($LogRun) { Start-LcRunLog -Key @{ run = 'F7'; input = 'Shift+F7'; check = 'Ctrl+F7' }[$Mode] -Src $src }
+
+# g++ with its messages in the terminal; through Write-Host when the run is logged, so the log has them too.
+function Invoke-Gpp([string[]]$GppArgs) {
+    if (-not $script:LcRunLog) { & $Gpp @GppArgs; return }
+    & $Gpp @GppArgs 2>&1 | ForEach-Object {
+        $line = "$_"
+        if ($line -match ': error: ') { Write-Host $line -ForegroundColor Red }
+        elseif ($line -match ': warning: ') { Write-Host $line -ForegroundColor Yellow }
+        else { Write-Host $line }
+    }
+}
 
 $name = [IO.Path]::GetFileNameWithoutExtension($src)
 $hasMain = Select-String -LiteralPath $src -Pattern '\bmain\s*\(' -Quiet
@@ -23,7 +38,7 @@ if ($Mode -eq 'check' -or -not $hasMain) {
     # LeetCode starters have no #includes: the prelude supplies them.
     $pre = @()
     if (-not $hasMain) { $pre = '-include', (Join-Path (Split-Path -Parent $PSScriptRoot) 'lc\lc-prelude.h') }
-    & $Gpp @CppFlags @pre -fsyntax-only $src
+    Invoke-Gpp (@($CppFlags) + $pre + '-fsyntax-only', $src)
     if ($LASTEXITCODE -eq 0) { Write-Host 'No errors.' -ForegroundColor Green }
     Finish $LASTEXITCODE
 }
@@ -33,7 +48,9 @@ New-Item -ItemType Directory -Force $buildDir | Out-Null
 $exe = Join-Path $buildDir "$name.exe"
 
 Write-Host "Compiling $name.cpp..." -ForegroundColor Cyan
-& $Gpp @CppFlags @TestFlags $src -o $exe
+$pre = @()
+if ($script:LcRunLog) { $pre = '-include', (Join-Path (Split-Path -Parent $PSScriptRoot) 'lc\lc-unbuffered.h') }
+Invoke-Gpp (@($CppFlags) + @($TestFlags) + $pre + $src, '-o', $exe)
 if ($LASTEXITCODE -ne 0) { Finish $LASTEXITCODE }
 
 $in = Join-Path (Split-Path -Parent $src) 'input.txt'
@@ -48,7 +65,7 @@ if ($Mode -eq 'input') {
     Write-Host '--- running (type input; Ctrl+Z then Enter ends input) ---' -ForegroundColor Cyan
 }
 
-$m = if ($Mode -eq 'input') { Start-Measured -Exe $exe -StdinFile $in } else { Start-Measured -Exe $exe }
+$m = if ($Mode -eq 'input') { Start-Measured -Exe $exe -StdinFile $in -TeeTo $script:LcRunLog } else { Start-Measured -Exe $exe -TeeTo $script:LcRunLog }
 $code = $m.Code
 $cpuMs = $m.CpuMs
 $peak = $m.PeakBytes

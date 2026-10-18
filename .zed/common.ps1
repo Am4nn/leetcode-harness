@@ -40,13 +40,17 @@ function Explain([int]$code) {
 # -StdinFile is copied to the program's stdin; without it stdin is inherited.
 # -TimeoutMs 0 means no timeout; on timeout the process tree is killed and Code is $null.
 # -NoStdout discards the program's stdout (LeetCode analyze: debug prints would flood the terminal).
+# -TeeTo: the program's stdout and stderr still reach the terminal and are also copied to this stream (the
+# run log). Piped stdout is fully buffered, so the program should make it unbuffered (lc/lc-unbuffered.h)
+# or prints before a crash are lost.
 function Start-Measured {
     param(
         [Parameter(Mandatory)][string]$Exe,
         [string[]]$ArgumentList = @(),
         [string]$StdinFile,
         [int]$TimeoutMs = 0,
-        [switch]$NoStdout
+        [switch]$NoStdout,
+        [IO.Stream]$TeeTo
     )
     $psi = New-Object Diagnostics.ProcessStartInfo $Exe
     $psi.UseShellExecute = $false
@@ -54,12 +58,22 @@ function Start-Measured {
         if ($a -eq '' -or $a -match '[\s"]') { '"' + ($a -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"' } else { $a }
     }
     $psi.Arguments = $quoted -join ' '
+    $tee = $null -ne $TeeTo -and -not $NoStdout
     $psi.RedirectStandardInput = [bool]$StdinFile
-    $psi.RedirectStandardOutput = [bool]$NoStdout
+    $psi.RedirectStandardOutput = $NoStdout -or $tee
+    $psi.RedirectStandardError = $tee
     # Otherwise .NET writes a UTF-8 BOM (ef bb bf) before the file and the first cin >> fails.
     if ($StdinFile) { [Console]::InputEncoding = New-Object Text.UTF8Encoding $false }
     $p = [Diagnostics.Process]::Start($psi)
     if ($NoStdout) { [void]$p.StandardOutput.BaseStream.CopyToAsync([IO.Stream]::Null) }
+    $pumps = @()
+    if ($tee) {
+        $pumps = @(
+            @{ From = $p.StandardOutput.BaseStream; To = [Console]::OpenStandardOutput() }
+            @{ From = $p.StandardError.BaseStream; To = [Console]::OpenStandardError() }
+        )
+        foreach ($q in $pumps) { $q.Buf = New-Object byte[] 65536; $q.Task = $q.From.ReadAsync($q.Buf, 0, $q.Buf.Length) }
+    }
     if ($StdinFile) {
         $fs = [IO.File]::OpenRead($StdinFile)
         try { $fs.CopyTo($p.StandardInput.BaseStream) } catch {}  # the program may exit before reading it all
@@ -76,15 +90,32 @@ function Start-Measured {
             try { $p.Kill() } catch {}
             break
         }
+        Copy-LcPumped $pumps $TeeTo
         Start-Sleep -Milliseconds 10
     }
     $p.WaitForExit()
+    Copy-LcPumped $pumps $TeeTo -Drain
     $code = $null
     if (-not $timedOut) { $code = $p.ExitCode }
     $cpuMs = 0
     try { $cpuMs = [int]$p.TotalProcessorTime.TotalMilliseconds } catch {}
     $p.Dispose()
     @{ Code = $code; CpuMs = $cpuMs; PeakBytes = $peak; TimedOut = $timedOut }
+}
+
+# Start-Measured -TeeTo: copies what each pipe has read so far to the terminal and the log, then reads on.
+# -Drain: reads each pipe to its end (the program has exited).
+function Copy-LcPumped($Pumps, [IO.Stream]$Log, [switch]$Drain) {
+    foreach ($q in $Pumps) {
+        while ($q.Task -and ($Drain -or $q.Task.IsCompleted)) {
+            $n = 0
+            try { $n = $q.Task.GetAwaiter().GetResult() } catch {}
+            if ($n -le 0) { $q.Task = $null; break }
+            $q.To.Write($q.Buf, 0, $n); $q.To.Flush()
+            try { $Log.Write($q.Buf, 0, $n); $Log.Flush() } catch {}
+            $q.Task = $q.From.ReadAsync($q.Buf, 0, $q.Buf.Length)
+        }
+    }
 }
 
 # Reruns a crashed program under gdb and prints the crash lines in -Src.

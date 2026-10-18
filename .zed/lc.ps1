@@ -9,6 +9,7 @@ param(
     [switch]$NoOpen,      # don't open a newly created test file in Zed
     [switch]$Offline,     # never contact LeetCode; use the cached problem data only
     [switch]$NoCommit,    # no auto-commit on solve
+    [switch]$LogRun,      # save this run's output for .zed/lc-context.ps1 (the Zed tasks pass it)
     [string]$JourneyRoot = '',   # event log, snapshots, journey.md (default <dsa>/journey)
     [string]$CasesRoot = '',     # <slug>/cases.txt and <slug>/brute.cpp per problem (default <dsa>/cases)
     [int]$TimeoutMs = 30000,
@@ -22,6 +23,7 @@ param(
 . (Join-Path $PSScriptRoot 'lc\testfile.ps1')
 . (Join-Path $PSScriptRoot 'lc\build.ps1')
 . (Join-Path $PSScriptRoot 'lc\journey.ps1')
+. (Join-Path $PSScriptRoot 'lc\runlog.ps1')
 
 $dsaRoot = Split-Path -Parent $PSScriptRoot
 if (-not $JourneyRoot) { $JourneyRoot = Join-Path $dsaRoot 'journey' }
@@ -114,7 +116,7 @@ function Complete-LcJourney([int]$code) {
     }
     if ($r.AllPass -and -not $NoWait) {
         Write-Host "`nNote (Enter to skip): " -NoNewline
-        $note = [Console]::ReadLine()
+        $note = Read-LcLine
         if ($note -and $note.Trim()) { Add-LcEvent 'note' @{ text = $note.Trim() } }
     }
     Update-LcJourney
@@ -188,6 +190,7 @@ $src = (Resolve-Path -LiteralPath $src).ProviderPath
 if ([IO.Path]::GetExtension($src) -ne '.cpp') { Write-Host "Not a .cpp file: $src" -ForegroundColor Red; Exit-Lc 1 }
 
 $slug = [IO.Path]::GetFileNameWithoutExtension($src)
+if ($LogRun) { Start-LcRunLog -Key $(if ($Mode -eq 'test') { 'Alt+F7' } else { 'Alt+F8' }) -Src $src }
 # The harness's files live outside the solution's folder: cases/<slug>/, journey/problems/.
 $caseDir = Join-Path $CasesRoot $slug
 $testFile = Join-Path $caseDir 'cases.txt'
@@ -492,7 +495,7 @@ function Invoke-LcCases($list) {
     Remove-Item -LiteralPath $resultsPath -ErrorAction SilentlyContinue
     $argv = @('test', $casesPath, $resultsPath)
     if ($anyOrder) { $argv += '--any-order' }
-    $m = Start-Measured -Exe $build.Exe -ArgumentList $argv -TimeoutMs $TimeoutMs
+    $m = Start-Measured -Exe $build.Exe -ArgumentList $argv -TimeoutMs $TimeoutMs -TeeTo $script:LcRunLog
     $done = @()
     $pending = $null
     if (Test-Path -LiteralPath $resultsPath) {
@@ -580,7 +583,7 @@ if ($cases.Count -eq 0) {
         $vals = @()
         foreach ($name in $names) {
             Write-Host "$name = " -NoNewline
-            $a = [Console]::ReadLine()
+            $a = Read-LcLine
             if ($null -eq $a -or $a.Trim() -eq '') { $vals = $null; break }
             $vals += $a.Trim()
         }

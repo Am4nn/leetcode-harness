@@ -9,6 +9,16 @@ I practice LeetCode in C++ here. Use my files to answer questions about my solut
 - `journey/journey.md`: one row per problem: status, difficulty, tags, complexity, attempts, note.
 - `journey/problems/<slug>.json`: the problem from LeetCode, including statement, tags and constraints.
 - `journey/snapshots/<slug>/`: earlier versions of a solution.
+- `build/runs/`: my last 50 runs from Zed (F7, Shift+F7, Ctrl+F7, Alt+F7, Alt+F8). Each run has the full terminal output and a copy of the source as it ran. Read them through the context command below.
+
+## Load context first
+Before answering any question about my code, a run, an error or a line number, run:
+`powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc-context.ps1`
+It prints my latest run with its key, file, command and full output, the file's source now with line numbers, what changed since that run, the problem's cases.txt and its journey (status, runs, notes, last events).
+- `-Run 2` is the run before that one, `-File <slug>` is that problem's latest run, `-List 10` lists recent runs, and `-Full` doesn't cut long output.
+- "Line N" means line N of the source now. Line numbers in the output belong to the source as it ran, so check "Changes since the run" before you match them up.
+- Ask which file or run I mean when it isn't clear. For example: I name a different file than the latest run's; the command prints "Note: saved after this run"; or the run is hours old and my question sounds like it's about something new.
+- Don't ask for anything the command already shows.
 
 ## How to help
 **A problem I haven't solved** (its status isn't `accepted`):
@@ -43,7 +53,7 @@ Pattern: <name>.  Related: <2-3 problems with the same pattern that aren't in jo
 
 **Check before claiming.** When a claim about my code can be tested, run it instead of guessing. Use a temp journey and no commit, so the check doesn't count as one of my attempts:
 `powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc.ps1 -Mode test -NoWait -NoOpen -NoCommit -JourneyRoot $env:TEMP\lc-ask leetcode-solves\<slug>.cpp`
-(`-Mode analyze` gives complexity and TLE risk.)
+(`-Mode analyze` gives complexity and TLE risk.) Without `-LogRun` the check isn't logged, so it doesn't replace my latest run.
 
 ## How to write
 - Put the answer in the first sentence. Keep it short, in plain words, and pitch it at someone learning.
