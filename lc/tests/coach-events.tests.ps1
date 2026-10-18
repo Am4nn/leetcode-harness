@@ -80,6 +80,38 @@
         $r = Invoke-Coach @('hint', '-Slug', 'old-one', '-Now', '2026-10-18T10:04:00+05:30')
         Assert-Equal $r.Code 0 "hint old-one`n$($r.Out)"
         Assert-Match ([IO.File]::ReadAllText((Join-Path $journey 'journey.md'))) '\[old-one\]\(https://leetcode\.com/problems/old-one/\) \| failed \|'
+
+        # -IdeaFile: double quotes and newlines reach the idea (a command-line -Idea drops the quotes)
+        $if = Join-Path $tmp 'idea.txt'
+        [IO.File]::WriteAllText($if, "Store `"target - x`" before`nchecking", $utf8)
+        $r = Invoke-Coach @('review', '-Slug', 'two-sum', '-Score', '8', '-Label', 'Great', '-Pattern', 'Hash Map', '-IdeaFile', $if, '-Now', '2026-10-18T10:05:00+05:30')
+        Assert-Equal $r.Code 0 "review -IdeaFile`n$($r.Out)"
+        $rv = @(Read-LcEvents $journey -Slug 'two-sum' | Where-Object { $_.event -eq 'review' })[-1]
+        Assert-Equal $rv.idea 'Store "target - x" before checking'
+
+        # A harness append in progress (it holds the log open for writing): the event waits, then lands
+        $ev = Join-Path $journey 'events.jsonl'
+        $n = @(Read-LcEvents $journey).Count
+        $hold = [IO.File]::Open($ev, 'Append', 'Write', 'Read')
+        try {
+            $si = New-Object Diagnostics.ProcessStartInfo 'powershell.exe'
+            $si.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$coach`" hint -Slug two-sum -JourneyRoot `"$journey`" -SolutionsRoot `"$sols`""
+            $si.UseShellExecute = $false; $si.CreateNoWindow = $true; $si.RedirectStandardOutput = $true
+            $pr = [Diagnostics.Process]::Start($si)
+            Start-Sleep -Milliseconds 2500
+        } finally { $hold.Dispose() }
+        $o = $pr.StandardOutput.ReadToEnd(); $pr.WaitForExit()
+        Assert-Equal $pr.ExitCode 0 "hint while the log is busy`n$o"
+        Assert-Equal @(Read-LcEvents $journey).Count ($n + 1) 'hint while the log is busy: event count'
+
+        # A failed write prints an error and exits 1 (read-only log), and says nothing was recorded
+        [IO.File]::SetAttributes($ev, 'ReadOnly')
+        try {
+            $r = Invoke-Coach @('hint', '-Slug', 'two-sum')
+            Assert-Equal $r.Code 1 "hint on a read-only log`n$($r.Out)"
+            Assert-Match $r.Out '^error: '; Assert-True ($r.Out -notmatch 'recorded') 'read-only log said recorded'
+        } finally { [IO.File]::SetAttributes($ev, 'Normal') }
+        Assert-Equal @(Read-LcEvents $journey).Count ($n + 1) 'read-only log: event count'
     }
     finally {
         $env:LC_USER_FILE = $oldUf

@@ -4,7 +4,7 @@
 # $A: Command (hint|solution|review), Slug, Score, Label, Pattern, Idea (optional: the review's key idea in
 # one line, shown on the journey view's Revise page), JourneyRoot and SolutionsRoot (full
 # paths), Now ([datetime]). Writes one event, rebuilds journey.md and prints one line. Returns the exit
-# code: 0, or 1 on bad input with nothing written.
+# code: 0, or 1 on bad input with nothing written. A write that fails throws.
 function Invoke-LcCoachEvent([hashtable]$A) {
     $cmd = [string]$A.Command
     $slug = ([string]$A.Slug).Trim()
@@ -35,7 +35,22 @@ function Invoke-LcCoachEvent([hashtable]$A) {
     }
 
     $ts = ([datetime]$A.Now).ToString('yyyy-MM-ddTHH:mm:sszzz', [Globalization.CultureInfo]::InvariantCulture)
-    Write-LcEvent -Root $root -Event $cmd -Slug $slug -File $file -SrcHash $hash -Data $data -Ts $ts
+    # The harness appends with the same Write-LcEvent, whose AppendAllText lets no second writer in: a run
+    # being logged right now makes this one fail with a sharing violation, so retry that for a few seconds.
+    # Any other failure (a read-only log) goes up to the caller, and nothing is reported as recorded.
+    # (The type is tested by hand: once PS 5.1 compiles a loop, a typed catch no longer unwraps a method
+    # call's MethodInvocationException.)
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    while ($true) {
+        try { Write-LcEvent -Root $root -Event $cmd -Slug $slug -File $file -SrcHash $hash -Data $data -Ts $ts; break }
+        catch {
+            $e = $_.Exception
+            if ($e -is [Management.Automation.MethodInvocationException] -and $e.InnerException) { $e = $e.InnerException }
+            $busy = ($e -is [IO.IOException]) -and (($e.HResult -band 0xFFFF) -in @(32, 33))
+            if (-not $busy -or [DateTime]::UtcNow -gt $deadline) { throw }
+        }
+        Start-Sleep -Milliseconds 20
+    }
     # A full rebuild, so time-based statuses (failed after 7 days) stay current. A problem that was never
     # run has no row; a journey.md problem must not undo the event that is already saved.
     try { Update-LcJourneyFile -Root $root -AcceptsTracked (Test-LcAcceptsTracked (Get-LcUserFile)) -Now ([datetime]$A.Now) }
