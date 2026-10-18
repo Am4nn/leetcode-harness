@@ -48,6 +48,7 @@ Pattern: <name>.  Related: <2-3 problems with the same pattern that aren't in jo
 ## How to write
 - Put the answer in the first sentence. Keep it short, in plain words, and pitch it at someone learning.
 - Facts only. Say "not sure" when you aren't, rather than guessing.
+- `accepted` events only show that LeetCode accepted something. Rejected submissions are never recorded, so don't claim how many submissions it took. "Attempts" counts my local Alt+F7 runs.
 - Be concrete: real inputs, `O(n)` time / `O(1)` space, line numbers in my code.
 - No praise, celebration or excitement. No "great question", no emoji, no exclamation marks.
 - No filler: "it's worth noting", "let's dive in", "at its core", "here's the thing", "the key insight is" as a setup line.
