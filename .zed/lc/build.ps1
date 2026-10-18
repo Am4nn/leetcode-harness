@@ -79,6 +79,12 @@ function Initialize-LcGch([string]$Dir, [string]$Name, [string]$Text, [string[]]
     }
     if ($fresh) { return $hdr }
 
+    # The only slow step (first run, or after lc/*.h changes); say so once so the silent wait doesn't look
+    # stuck. Console only: self-tests capture output and stay byte-exact.
+    if (-not $script:LcGchNoticeShown -and -not [Console]::IsOutputRedirected) {
+        Write-Host 'Building precompiled headers (first run only, ~30-60 s)...'
+        $script:LcGchNoticeShown = $true
+    }
     New-Item -ItemType Directory -Force $Dir | Out-Null
     $utf8 = New-Object Text.UTF8Encoding $false
     [IO.File]::WriteAllText($hdr, $Text, $utf8)
