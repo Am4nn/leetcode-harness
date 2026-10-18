@@ -23,8 +23,9 @@
     & $git -C $tmp commit -q -m init
     # Every run writes its journey under $tmp; the real dsa/journey is never touched.
     $realEvents = Join-Path $repo 'journey\events.jsonl'
-    $realEventsTime = $null
-    if (Test-Path -LiteralPath $realEvents) { $realEventsTime = (Get-Item -LiteralPath $realEvents).LastWriteTimeUtc }
+    # The user may press Alt+F7 while tests run, so only lines that point at this test's files count as leaks.
+    $realEventsLines = 0
+    if (Test-Path -LiteralPath $realEvents) { $realEventsLines = @([IO.File]::ReadAllLines($realEvents)).Count }
     . (Join-Path $repo '.zed\common.ps1')
     . (Join-Path $repo '.zed\lc\info.ps1')
     . (Join-Path $repo '.zed\lc\build.ps1')
@@ -544,8 +545,12 @@
         Assert-Equal (& $countAc) 1 'e2e: second run duplicated the accepted event'
 
         # e2e: the real dsa/journey was never written
-        if ($null -eq $realEventsTime) { Assert-True (-not (Test-Path -LiteralPath $realEvents)) 'e2e: wrote the real journey' }
-        else { Assert-Equal (Get-Item -LiteralPath $realEvents).LastWriteTimeUtc $realEventsTime 'e2e: wrote the real journey' }
+        if (Test-Path -LiteralPath $realEvents) {
+            $tmpJson = $tmp.Replace('\', '/')
+            $leaked = @([IO.File]::ReadAllLines($realEvents) | Select-Object -Skip $realEventsLines |
+                Where-Object { $_.Replace('\\', '/').IndexOf($tmpJson, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+            Assert-Equal $leaked.Count 0 "e2e: wrote the real journey`n$($leaked -join "`n")"
+        }
 
         # e2e: the user's own build cache was left alone
         if ($null -ne $userGchTime) {
