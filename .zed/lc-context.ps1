@@ -28,14 +28,30 @@ if (-not $JourneyRoot) { $JourneyRoot = Join-Path $dsaRoot 'journey' }
 if (-not $CasesRoot) { $CasesRoot = Join-Path $dsaRoot 'cases' }
 if (-not $UserRoot) { $UserRoot = $dsaRoot }
 $utf8 = New-Object Text.UTF8Encoding $false
+# An agent reads this through a pipe, which PowerShell would encode in the OEM code page (a console gets
+# Unicode either way, and setting it there would change the console's code page after we exit).
+if ([Console]::IsOutputRedirected) { try { [Console]::OutputEncoding = $utf8 } catch {} }  # throws with no console
 $keys = 'f7|shift-f7|ctrl-f7|alt-f7|alt-f8'
 
+# A log's lines. Shared read: the run's terminal holds its log open for writing until it closes.
+function Read-LcRunLines([string]$Path, [switch]$HeadOnly) {
+    $fs = New-Object IO.FileStream($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    $sr = New-Object IO.StreamReader($fs, $utf8)
+    try {
+        while ($null -ne ($l = $sr.ReadLine())) {
+            $l
+            if ($HeadOnly -and $l -eq '----') { break }
+        }
+    } finally { $sr.Dispose() }
+}
+
 # A run log as @{ Path; Head = @{ time; key; file; source; command }; Body = [string[]] }.
-function Read-LcRun([string]$Path) {
+# -HeadOnly: just the header (Body is empty).
+function Read-LcRun([string]$Path, [switch]$HeadOnly) {
     $head = @{}
     $body = New-Object Collections.Generic.List[string]
     $inBody = $false
-    foreach ($l in [IO.File]::ReadAllLines($Path, $utf8)) {
+    foreach ($l in @(Read-LcRunLines $Path -HeadOnly:$HeadOnly)) {
         if ($inBody) { $body.Add($l.TrimEnd("`r")) }
         elseif ($l -eq '----') { $inBody = $true }
         elseif ($l -match '^(\w+): (.*)$') { $head[$Matches[1]] = $Matches[2] }
@@ -72,19 +88,26 @@ function Resolve-LcRunFile([string]$Name) {
     return Join-Path $dsaRoot $Name
 }
 
-# My .cpp files, newest saved first: the ones in folders under $UserRoot, minus the harness's own folders
-# and hidden ones (.claude holds agents' worktrees, with copies of my files).
+# My .cpp files, newest saved first: the ones directly in $UserRoot and in folders under it, minus the
+# harness's own folders and hidden ones (.claude holds agents' worktrees, with copies of my files).
 function Get-LcUserCpp {
     $skip = @('build', 'journey', 'lc', 'cases', 'docs')
     $runsDir = $runsRoot.TrimEnd('\') + '\'
-    return @(Get-ChildItem -LiteralPath $UserRoot -Directory | Where-Object { $_.Name -notin $skip -and -not $_.Name.StartsWith('.') } |
-        ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -Recurse -Filter '*.cpp' -File -ErrorAction SilentlyContinue } |
-        Where-Object { -not $_.FullName.StartsWith($runsDir, [StringComparison]::OrdinalIgnoreCase) } |
+    $top = @(Get-ChildItem -LiteralPath $UserRoot -Filter '*.cpp' -File -ErrorAction SilentlyContinue)
+    $inDirs = @(Get-ChildItem -LiteralPath $UserRoot -Directory | Where-Object { $_.Name -notin $skip -and -not $_.Name.StartsWith('.') } |
+        ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -Recurse -Filter '*.cpp' -File -ErrorAction SilentlyContinue })
+    return @(@($top) + @($inDirs) | Where-Object { -not $_.FullName.StartsWith($runsDir, [StringComparison]::OrdinalIgnoreCase) } |
         Sort-Object LastWriteTime -Descending)
 }
 
+# The runs of files named <slug>.cpp. The log name alone is ambiguous (<stamp>-a-shift-f7 is a Shift+F7 run
+# of a.cpp or an F7 run of a-shift.cpp), so the header's file decides.
 function Get-LcSlugLogs($Logs, [string]$Slug) {
-    return @($Logs | Where-Object { $_.Name -match ('^\d{8}-\d{6}-\d{3}-' + [regex]::Escape($Slug) + "-($keys)\.log$") })
+    $named = @($Logs | Where-Object { $_.Name -match ('^\d{8}-\d{6}-\d{3}-' + [regex]::Escape($Slug) + "-($keys)\.log$") })
+    return @($named | Where-Object {
+        $f = (Read-LcRun $_.FullName -HeadOnly).Head.file
+        $f -and [IO.Path]::GetFileNameWithoutExtension($f) -eq $Slug
+    })
 }
 
 function Write-LcNumbered([string]$Text) {
@@ -99,8 +122,9 @@ function Write-LcRun($R, [string]$Title) {
     "command: $($R.Head.command)"
     ''
     '== Output (line numbers in it refer to the source as it was run)'
-    $body = $R.Body
-    while ($body.Count -and -not $body[-1].Trim()) { $body = $body[0..($body.Count - 2)] }
+    $n = $R.Body.Count
+    while ($n -gt 0 -and -not $R.Body[$n - 1].Trim()) { $n-- }  # trailing blank lines
+    $body = if ($n) { @($R.Body[0..($n - 1)]) } else { @() }
     if (-not $Full -and $body.Count -gt 130) {
         $body[0..39]
         "... ($($body.Count - 120) lines cut; -Full shows them) ..."
@@ -127,7 +151,12 @@ function Write-LcSource([string]$SrcPath, $R) {
     if ($null -ne $then -and $now -ne $then) {
         ''
         '== Changes since the run (- as run, + now)'
-        $diff = & git -c core.autocrlf=false diff --no-index --no-color -U1 -- $runCopy $SrcPath 2>$null
+        # git prints the files' UTF-8 as is; PowerShell decodes it with [Console]::OutputEncoding.
+        $enc = [Console]::OutputEncoding
+        try {
+            try { [Console]::OutputEncoding = $utf8 } catch {}
+            $diff = & git -c core.autocrlf=false diff --no-index --no-color -U1 -- $runCopy $SrcPath 2>$null
+        } finally { try { [Console]::OutputEncoding = $enc } catch {} }
         @($diff) | Where-Object { $_ -notmatch '^(diff --git|index |--- |\+\+\+ |old mode|new mode)' }
     }
 }

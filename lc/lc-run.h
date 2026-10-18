@@ -5,6 +5,7 @@
 #define LC_RUN_H
 
 #include <cxxabi.h>
+#include <io.h>  // _dup2
 
 namespace lc {
 
@@ -133,6 +134,9 @@ inline int parse_cli(int argc, char** argv, Cli& cli) {
         cli.any_order = argc == 5;
         // The run log pipes stdout, and a piped stdout is fully buffered: prints before a crash would be lost.
         std::setvbuf(stdout, nullptr, _IONBF, 0);
+        // LC_STDERR_TO_STDOUT=1 (Start-Measured -TeeTo): the user's cerr goes down stdout's pipe, so the two
+        // stay in the order printed. Results go to the results file, so nothing here parses either stream.
+        if (const char* v = std::getenv("LC_STDERR_TO_STDOUT"); v && v[0] == '1') _dup2(_fileno(stdout), _fileno(stderr));
         return 0;
     }
     bool bench = cli.mode == "bench", gen = cli.mode == "gen", profile = cli.mode == "profile";

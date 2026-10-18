@@ -42,7 +42,9 @@ function Explain([int]$code) {
 # -NoStdout discards the program's stdout (LeetCode analyze: debug prints would flood the terminal).
 # -TeeTo: the program's stdout and stderr still reach the terminal and are also copied to this stream (the
 # run log). Piped stdout is fully buffered, so the program should make it unbuffered (lc/lc-unbuffered.h)
-# or prints before a crash are lost.
+# or prints before a crash are lost. Two pipes read one after the other lose the order of cout and cerr
+# lines, so the program also gets LC_STDERR_TO_STDOUT=1 and points its stderr at stdout's pipe (the
+# headers above and lc-run.h do); the stderr pipe stays pumped for anything written before that.
 function Start-Measured {
     param(
         [Parameter(Mandatory)][string]$Exe,
@@ -62,6 +64,7 @@ function Start-Measured {
     $psi.RedirectStandardInput = [bool]$StdinFile
     $psi.RedirectStandardOutput = $NoStdout -or $tee
     $psi.RedirectStandardError = $tee
+    if ($tee) { $psi.EnvironmentVariables['LC_STDERR_TO_STDOUT'] = '1' }
     # Otherwise .NET writes a UTF-8 BOM (ef bb bf) before the file and the first cin >> fails.
     if ($StdinFile) { [Console]::InputEncoding = New-Object Text.UTF8Encoding $false }
     $p = [Diagnostics.Process]::Start($psi)
@@ -74,15 +77,18 @@ function Start-Measured {
         )
         foreach ($q in $pumps) { $q.Buf = New-Object byte[] 65536; $q.Task = $q.From.ReadAsync($q.Buf, 0, $q.Buf.Length) }
     }
+    # Copied in the background: a program that prints while it reads blocks on a full stdout pipe until the
+    # loop below drains it, so a copy that waits for the program to read everything first never finishes.
+    $stdin = $null
     if ($StdinFile) {
         $fs = [IO.File]::OpenRead($StdinFile)
-        try { $fs.CopyTo($p.StandardInput.BaseStream) } catch {}  # the program may exit before reading it all
-        finally { $fs.Dispose(); try { $p.StandardInput.Close() } catch {} }
+        $stdin = @{ File = $fs; Task = $fs.CopyToAsync($p.StandardInput.BaseStream) }
     }
     $peak = 0
     $timedOut = $false
     $sw = [Diagnostics.Stopwatch]::StartNew()
     while (-not $p.HasExited) {
+        if ($stdin -and $stdin.Task.IsCompleted) { Close-LcStdin $p $stdin; $stdin = $null }  # end of input
         try { $p.Refresh(); $peak = [Math]::Max($peak, $p.PeakWorkingSet64) } catch {}
         if ($TimeoutMs -gt 0 -and $sw.ElapsedMilliseconds -ge $TimeoutMs) {
             $timedOut = $true
@@ -93,6 +99,7 @@ function Start-Measured {
         Copy-LcPumped $pumps $TeeTo
         Start-Sleep -Milliseconds 10
     }
+    if ($stdin) { Close-LcStdin $p $stdin }  # the program exited (or was killed) before reading it all
     $p.WaitForExit()
     Copy-LcPumped $pumps $TeeTo -Drain
     $code = $null
@@ -101,6 +108,14 @@ function Start-Measured {
     try { $cpuMs = [int]$p.TotalProcessorTime.TotalMilliseconds } catch {}
     $p.Dispose()
     @{ Code = $code; CpuMs = $cpuMs; PeakBytes = $peak; TimedOut = $timedOut }
+}
+
+# Start-Measured -StdinFile: closes the program's stdin (it sees end of input) and the file. Closing the pipe
+# first also ends a copy still writing to a program that has exited.
+function Close-LcStdin($P, $Stdin) {
+    try { $P.StandardInput.Close() } catch {}  # broken pipe: the program exited before reading it all
+    try { [void]$Stdin.Task.Wait(1000) } catch {}
+    $Stdin.File.Dispose()
 }
 
 # Start-Measured -TeeTo: copies what each pipe has read so far to the terminal and the log, then reads on.
