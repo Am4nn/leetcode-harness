@@ -76,7 +76,11 @@ function Format-LcAgo([datetime]$T) {
     return "$([int]($m / 1440)) days ago"
 }
 
-function Get-LcRunTime($R) { return [datetime]::Parse($R.Head.time, [Globalization.CultureInfo]::InvariantCulture) }
+function Get-LcRunTime($R) {
+    $t = [datetime]::MinValue
+    if ([datetime]::TryParse([string]$R.Head.time, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$t)) { return $t }
+    return Get-LcRunStart $R  # a header cut short: the run id still has the time
+}
 
 # When the run started, to the millisecond (from its id), to compare with file save times.
 function Get-LcRunStart($R) {
