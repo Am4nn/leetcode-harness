@@ -20,7 +20,7 @@
     $env:LC_BUILD_ROOT = Join-Path $env:TEMP 'lc-e2e-build'  # shared with e2e: its PCHs are reused
 
     function Invoke-Ctx([string[]]$Extra = @()) {
-        return (powershell -NoProfile -ExecutionPolicy Bypass -File $ctxPs1 -JourneyRoot $journey -CasesRoot $cases @Extra 2>&1 | Out-String)
+        return (powershell -NoProfile -ExecutionPolicy Bypass -File $ctxPs1 -JourneyRoot $journey -CasesRoot $cases -UserRoot $tmp @Extra 2>&1 | Out-String)
     }
     function Get-Logs { return @(Get-ChildItem -LiteralPath $runs -Filter '*.log' | Sort-Object Name) }
 
@@ -36,7 +36,9 @@
         }
 
         # A crash after a debug print: the print (piped stdout), the crash and its line are all in the log
-        $src = Join-Path $tmp 'rotate-array.cpp'
+        $solves = Join-Path $tmp 'solves'
+        New-Item -ItemType Directory -Force $solves | Out-Null
+        $src = Join-Path $solves 'rotate-array.cpp'
         [IO.File]::WriteAllText($src, "class Solution {`npublic:`n    void rotate(vector<int>& nums, int k) {`n        cout << `"dbg-print`" << endl;`n        nums[nums.size()] = k;`n    }`n};`n", $utf8)
         $out = '' | powershell -NoProfile -ExecutionPolicy Bypass -File $lcPs1 -Mode test -NoWait -NoOpen -NoCommit -Offline -LogRun -JourneyRoot $journey -CasesRoot $cases $src 2>&1 | Out-String
         Assert-Match $out 'dbg-print'  # still reaches the terminal
@@ -70,6 +72,27 @@
         Assert-Match $ctx '\(edited since the run\)'
         Assert-Match $ctx '(?m)^-\s+nums\[nums\.size\(\)\] = k;'
         Assert-Match $ctx '(?m)^\+\s+nums\[0\] = k;'
+
+        # A new file saved after the latest run counts as what I'm working on, run or not
+        $newSrc = Join-Path $solves 'two-sum.cpp'
+        [IO.File]::WriteAllText($newSrc, "class Solution {`npublic:`n    vector<int> twoSum(vector<int>& nums, int target) {`n    }`n};`n", $utf8)
+        $ctx = Invoke-Ctx
+        Assert-Match $ctx '(?m)^== Working on: .*two-sum\.cpp \(the newest file I saved'
+        Assert-Match $ctx '\(latest run: Alt\+F7 on .*rotate-array\.cpp; -Run 1 shows it\)'
+        Assert-Match $ctx '(?m)^Never run\.'
+        Assert-Match $ctx '(?m)^   3      vector<int> twoSum'
+        Assert-Match $ctx '== Problem: https://leetcode\.com/problems/two-sum/'
+        Assert-True ($ctx -notmatch '== Journey') "runlog: journey for a never-run file`n$ctx"
+        # -Run 1 still shows the latest run, and names the newer file
+        $ctx = Invoke-Ctx @('-Run', '1')
+        Assert-Match $ctx '== Run 1 of 50: Alt\+F7 on .*rotate-array\.cpp'
+        Assert-Match $ctx 'Note: saved after this run: .*two-sum\.cpp'
+        Assert-Match $ctx '== Problem: #189 Rotate Array'
+        # Going back to the older file (saved last) shows its own latest run
+        [IO.File]::AppendAllText($src, "// back`n", $utf8)
+        $ctx = Invoke-Ctx
+        Assert-Match $ctx '== Run 1 of 50: Alt\+F7 on .*rotate-array\.cpp'
+        Remove-Item -LiteralPath $newSrc
 
         # -List, -File, -Run
         $list = @((Invoke-Ctx @('-List', '3')).Trim() -split "`r?`n")

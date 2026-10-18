@@ -14,7 +14,7 @@ I practice LeetCode in C++ here. Use my files to answer questions about my solut
 ## Load context first
 Before answering any question about my code, a run, an error or a line number, run:
 `powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc-context.ps1`
-It prints my latest run with its key, file, command and full output, the file's source now with line numbers, what changed since that run, the problem's cases.txt and its journey (status, runs, notes, last events).
+It prints the file I'm working on: the newest .cpp I saved if that's newer than my latest run, else the latest run's file. For that file you get its latest run (key, command, full output), its source now with line numbers, what changed since that run, the problem (its LeetCode link when it hasn't been fetched yet), cases.txt and its journey (status, runs, notes, last events). A file that was never run shows "Never run."
 - `-Run 2` is the run before that one, `-File <slug>` is that problem's latest run, `-List 10` lists recent runs, and `-Full` doesn't cut long output.
 - "Line N" means line N of the source now. Line numbers in the output belong to the source as it ran, so check "Changes since the run" before you match them up.
 - Ask which file or run I mean when it isn't clear. For example: I name a different file than the latest run's; the command prints "Note: saved after this run"; or the run is hours old and my question sounds like it's about something new.
