@@ -394,6 +394,14 @@
         Assert-Match ([IO.File]::ReadAllText((Join-Path $journey 'journey.md'))) '\[Two Sum\]\(https://leetcode\.com/problems/two-sum/\) \| Easy \| Array, Hash Table \| O\(n( log n)?\) \|'
         Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '2' 'e2e: analyze committed'
 
+        # e2e: a fast O(n) solution (about 0.1 ms at n = 10^5) is timed in batches, so its few-microsecond
+        # calls aren't noise: it looks O(n) every time, not O(log n) or O(1).
+        for ($i = 1; $i -le 3; $i++) {
+            $r = Invoke-Lc (Join-Path $tmp 'shuffle-the-array.cpp') -Mode analyze
+            Assert-Equal $r.Code 0 "e2e: analyze shuffle-the-array exit code`n$($r.Out)"
+            Assert-Match $r.Out 'looks O\(n\)'
+        }
+
         # e2e: Task 13 - the brute force finds the bugged memo version's first wrong case (n % 7 == 0)
         $r = Invoke-Lc (Join-Path $tmp 'bugged\climbing-stairs.cpp') -Mode analyze
         Assert-Equal $r.Code 0 "e2e: analyze bugged exit code`n$($r.Out)"

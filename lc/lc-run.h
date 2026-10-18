@@ -241,6 +241,11 @@ inline constexpr long long node_budget = 2000000;
 // ask for 10^10 cells and run out of memory.
 inline constexpr long long grid_max_cells = 10000000;
 
+// A batch of timed calls (bench_loop) holds at most this many argument items (items_in) and this many
+// bytes of Solution objects at once: about 16 MB of int inputs plus results of the same size.
+inline constexpr long long batch_items = 4000000;
+inline constexpr long long batch_bytes = 64 << 20;
+
 // The size bench reports for a generated size parameter: a size scalar's value; a word list's number of
 // strings (R36: the unit of its words.length constraint); the total items of other vectors of containers
 // (a grid's cells); else the length or node count. Other types report the requested n.
@@ -281,6 +286,26 @@ template <class T> long long nodes_in(const T& v) {
     }
 }
 
+// Items held by generated arguments (a value or a tuple of them): container elements, characters and
+// nodes, counting each scalar as one. Sizes a batch's memory (batch_items).
+template <class T> long long items_in(const T& v) {
+    if constexpr (std::is_same_v<T, TreeNode*> || std::is_same_v<T, ListNode*>) {
+        return length_of(v);
+    } else if constexpr (is_tuple<T>::value) {
+        return std::apply([](const auto&... x) { return (0LL + ... + items_in(x)); }, v);
+    } else if constexpr (std::is_same_v<T, std::string>) {
+        return (long long)v.size() + 1;
+    } else if constexpr (is_vector_v<T>) {
+        long long s = 1;
+        if constexpr (std::is_arithmetic_v<typename T::value_type>) s += (long long)v.size();
+        else for (const auto& x : v) s += items_in(x);
+        return s;
+    } else {
+        (void)v;
+        return 1;
+    }
+}
+
 // Bench sizes, ascending: maxN, maxN/2, ... down to >= 8, at most 10. For a scalar size parameter with
 // maxN <= 64: up to 10 evenly spaced sizes from max(1, maxN/10) to maxN (ruling R5).
 inline std::vector<long long> bench_sizes(long long max_n, bool scalar) {
@@ -299,15 +324,26 @@ inline std::vector<long long> bench_sizes(long long max_n, bool scalar) {
     return v;
 }
 
-// One prepared bench size. `n` is the generated input's actual size (what the results report), `max_reps`
-// the rep limit, and `once(AllocStats*) -> ms` runs one timed call (or design sequence) on fresh inputs.
-// Given an AllocStats, `once` resets the stats right before the timed part and fills count/bytes since
-// then and peak above the live bytes at the reset.
+// One prepared bench size. `n` is the generated input's actual size (what the results report),
+// `max_calls` the limit on timed calls (R17's node budget), `max_batch` the most calls one batch may
+// hold inputs and results for at once (1: never batched), and `once(AllocStats*, k) -> ms` runs k timed
+// calls (or design sequences) back to back, each on fresh inputs prepared before the timed part, and
+// returns the time per call. Given an AllocStats (k == 1), `once` resets the stats right before the timed
+// part and fills count/bytes since then and peak above the live bytes at the reset.
 template <class F> struct BenchSize {
     long long n;
-    int max_reps;
+    long long max_calls;
+    long long max_batch;
     F once;
 };
+
+// A call shorter than batch_ms is timed in batches of about batch_ms (at most batch_max calls) and
+// reported per call: a single call of a few microseconds is mostly timer and cache noise. A size takes
+// at most bench_max_reps timed samples (batched_max_reps when batched) or bench_total_ms of timed work.
+inline constexpr double batch_ms = 1.0;
+inline constexpr long long batch_max = 10000;
+inline constexpr int bench_max_reps = 50, batched_max_reps = 10;
+inline constexpr double bench_total_ms = 30;
 
 // Runs bench over the schedule `sizes` and writes the results lines. `prepare(n)` returns a BenchSize.
 // A size whose actual n is not above the previous one is skipped (ruling R19).
@@ -342,19 +378,27 @@ template <class Prepare> int bench_loop(const Cli& cli, const std::vector<long l
                 }
             }
             out << "{\"status\":\"start\",\"n\":" << n << ",\"seed\":" << cli.seed << "}\n" << std::flush;
-            double best = 0, total = 0;
-            int reps = 0;
-            bool over = false;
-            while (true) {
-                double t = size.once(nullptr);
-                best = reps ? std::min(best, t) : t;
-                total += t;
-                ++reps;
-                if (reps == 1 && t > cli.max_ms) { over = true; break; }
-                if (total >= 30 || reps >= size.max_reps) break;
+            // The first call is timed alone: it decides the cap and whether to batch.
+            double best = size.once(nullptr, 1), total = best;
+            if (best > cli.max_ms) { capped(n, best, false); break; }
+            long long calls = 1, k = 1;
+            int reps = 1, max_reps = bench_max_reps;
+            if (best < batch_ms) {
+                k = std::min({(long long)std::ceil(batch_ms / std::max(best, 1e-6)), batch_max, size.max_batch,
+                              size.max_calls - calls});
+                // Batched samples replace the lone call, which carried the timer's overhead.
+                if (k > 1) reps = 0, max_reps = batched_max_reps;
+                else k = 1;
             }
-            if (over) { capped(n, best, false); break; }
-            out << "{\"n\":" << n << ",\"ms\":" << num_text(best) << ",\"reps\":" << reps << per_call(n, best) << "}\n"
+            while (total < bench_total_ms && reps < max_reps && calls + k <= size.max_calls) {
+                double t = size.once(nullptr, k);
+                best = reps ? std::min(best, t) : t;
+                total += t * (double)k;
+                calls += k;
+                ++reps;
+            }
+            out << "{\"n\":" << n << ",\"ms\":" << num_text(best) << ",\"reps\":" << reps
+                << (k > 1 ? ",\"batch\":" + std::to_string(k) : std::string()) << per_call(n, best) << "}\n"
                 << std::flush;
             done.push_back({n, best});
             last.emplace(std::move(size));
@@ -362,7 +406,7 @@ template <class Prepare> int bench_loop(const Cli& cli, const std::vector<long l
         if (last) {
             cur = last->n;
             AllocStats a{};
-            last->once(&a);
+            last->once(&a, 1);
             out << "{\"alloc\":{\"count\":" << a.count << ",\"bytes\":" << a.bytes << ",\"peak\":" << a.peak
                 << "},\"n\":" << cur << "}\n";
         }
@@ -439,29 +483,44 @@ int bench_function(const Cli& cli, M method, const std::vector<std::string>& nam
         [&]<size_t... I>(std::index_sequence<I...>) {
             ((I == (size_t)size_i ? (void)(actual = actual_size(std::get<I>(args), n)) : void()), ...);
         }(Seq{});
+        // R17: every timed call gets its own copy of the nodes, plus one for the alloc run.
         long long nodes = nodes_in(args);
-        int max_reps = nodes ? (int)std::clamp(node_budget / nodes - 1, 1LL, 50LL) : 50;
-        return BenchSize{actual, max_reps, [method, args = std::move(args)](AllocStats* alloc) -> double {
-            Args a = clone(args);
-            S sol;
+        long long max_calls = nodes ? std::max(node_budget / nodes - 1, 1LL) : std::numeric_limits<long long>::max();
+        // A batch holds its inputs, Solutions and results at once: keep it within batch_items items and
+        // batch_bytes of Solution objects.
+        long long max_batch = std::min(std::max(batch_items / std::max(items_in(args), 1LL), 1LL),
+                                       std::max(batch_bytes / (long long)sizeof(S), 1LL));
+        return BenchSize{actual, max_calls, max_batch, [method, args = std::move(args)](AllocStats* alloc, long long k) -> double {
+            std::vector<Args> in;
+            in.reserve((size_t)k);
+            for (long long i = 0; i < k; ++i) in.push_back(clone(args));
+            std::unique_ptr<S[]> sols(new S[(size_t)k]);
             Stopwatch w{alloc};
-            auto call = [&]<size_t... I>(std::index_sequence<I...>) -> decltype(auto) {
+            auto call = [&]<size_t... I>(long long i, std::index_sequence<I...>) -> decltype(auto) {
 // GCC false positive: on an empty Solution it flags the (dead) virtual-call branch of a member pointer call.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Warray-bounds"
-                return (sol.*method)(std::get<I>(a)...);
+                return (sols[i].*method)(std::get<I>(in[i])...);
 #pragma GCC diagnostic pop
             };
-            keep(a);
-            w.start();
+            keep(in);
             if constexpr (std::is_void_v<R>) {
-                call(Seq{});
-                keep(a);
-                return w.stop();
+                w.start();
+                for (long long i = 0; i < k; ++i) call(i, Seq{});
+                keep(in);
+                return w.stop() / (double)k;
             } else {
-                auto&& got = call(Seq{});
+                // Results stay alive until the timer stops, so freeing them is never timed.
+                using Kept = std::conditional_t<std::is_reference_v<R>, const void*, std::remove_cv_t<R>>;
+                std::vector<Kept> got;
+                got.reserve((size_t)k);
+                w.start();
+                for (long long i = 0; i < k; ++i) {
+                    if constexpr (std::is_reference_v<R>) got.push_back(&call(i, Seq{}));
+                    else got.push_back(call(i, Seq{}));
+                }
                 keep(got);
-                return w.stop();
+                return w.stop() / (double)k;
             }
         }};
     };
@@ -833,7 +892,8 @@ int bench_design(const Cli& cli, const std::vector<std::string>& ctor_names, con
     if (!load_spec(cli, spec)) return 2;
     auto prepare = [&](long long n) {
         // The sequence is rebuilt from the seed for every run (untimed), so each run gets fresh arguments.
-        return BenchSize{n, 50, [&, n](AllocStats* alloc) -> double {
+        // A sequence is never batched (max_batch 1): its n calls already make one run.
+        return BenchSize{n, (long long)bench_max_reps, 1LL, [&, n](AllocStats* alloc, long long) -> double {
             std::mt19937_64 rng(cli.seed);
             std::vector<std::function<void(C&)>> calls;
             auto ct = random_sequence<C, CtorA...>(spec, ctor_names, ms, n, rng, calls, nullptr, nullptr);
