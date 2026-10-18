@@ -113,12 +113,24 @@ function Write-LcBuildFailure($build) {
         elseif ($build.Errors -match '\[with T = ([^;\]]+)') { $t = $Matches[1] }
         elseif ($build.Errors -match 'lc: unsupported parameter type') { $t = '?' }
     }
+    Write-LcGap
     if ($t) {
         Write-Host "This problem uses a parameter type the harness doesn't support yet: $t" -ForegroundColor Red
     } else {
-        Write-Host (Remove-LcUserTuLines $build.Errors)
+        Write-LcGppDiagnostics (Remove-LcUserTuLines $build.Errors) $src
     }
 }
+
+# g++'s warnings for a solution that built: their own group, before the results.
+function Write-LcBuildWarnings($build) {
+    if (-not $build.Warnings) { return }
+    Write-LcGap
+    Write-LcGppDiagnostics (Remove-LcUserTuLines $build.Warnings) $src
+}
+
+# Output groups (header and mismatch, g++ diagnostics, results) are separated by exactly one blank line.
+# Call it right before a group's first line, and only for a group that prints something.
+function Write-LcGap { Write-Host '' }
 
 # g++'s output without "In file included from <build dir>\<name>-user.cpp:1:": the generated user TU
 # only includes the solution, so that line names a build file and nothing of the user's.
@@ -152,16 +164,13 @@ $fetch = Get-LcCachedQuestion -TestsDir $testsDir -Slug $slug -Offline:$Offline
 if ($fetch.Fetched) { Add-LcEvent 'fetch' (Get-LcFetchEventData $fetch.Question) }
 $q = $fetch.Question
 if ($q -and -not $q.metaData) { $q = $null }
-# Analyze prints only its report, so no title line.
 if ($q) {
-    if ($Mode -eq 'test') {
-        $tags = @($q.topicTags | ForEach-Object { $_.name }) -join ', '
-        $about = "#$($q.questionFrontendId) $($q.difficulty)"
-        if ($tags) { $about += " - $tags" }
-        Write-Host "$slug  ($about)" -ForegroundColor Cyan
-    }
+    $tags = @($q.topicTags | ForEach-Object { $_.name }) -join ', '
+    $about = "#$($q.questionFrontendId) $($q.difficulty)"
+    if ($tags) { $about += " - $tags" }
+    Write-Host "$slug  ($about)" -ForegroundColor Cyan
 } else {
-    if ($Mode -eq 'test') { Write-Host $slug -ForegroundColor Cyan }
+    Write-Host $slug -ForegroundColor Cyan
     if ($fetch.NotProblem) { Write-Host "(not a LeetCode problem: $slug)" -ForegroundColor DarkGray }
     elseif ($fetch.Tried) { Write-Host "Couldn't fetch $slug from LeetCode ($LcFetchError)." -ForegroundColor DarkGray }
 }
@@ -183,7 +192,7 @@ if ($q) {
     }
     $mismatch = Test-LcMethodMatch $info $srcText
     if ($mismatch) {
-        Write-Host $mismatch -ForegroundColor Yellow
+        Write-Host "! $mismatch" -ForegroundColor Yellow
         # Run the Solution's own public method anyway (a design class can't be substituted).
         $metaKind = $info.Kind
         $info = $null
@@ -236,9 +245,11 @@ if ($Mode -eq 'analyze') {
         Update-LcJourney
         Exit-Lc 1
     }
+    # The spec's assumed ranges, last in the results.
+    function Write-LcAssumed { foreach ($a in $spec.Assumed) { Write-LcLabeled 'note' $a.Trim('(', ')') } }
     $build = Build-LcExe -SrcPath $src -HarnessText $harnessText -UserText $userText -Flavor bench -Name bench
     if (-not $build.Ok) { Write-LcBuildFailure $build; Exit-LcFailedAnalyze 'build_error' }
-    if ($build.Warnings) { Write-Host (Remove-LcUserTuLines $build.Warnings) }
+    Write-LcBuildWarnings $build
     $buildDir = Split-Path -Parent $build.Exe
     $specPath = Join-Path $buildDir 'bench-spec.txt'
     $resultsPath = Join-Path $buildDir 'bench-results.txt'
@@ -256,17 +267,19 @@ if ($Mode -eq 'analyze') {
     # The largest size that finished below the cap: the one bench reruns for the allocation counts.
     $lastDone = $null
     foreach ($p in @($b.Points)) { if (-not $p.capped) { $lastDone = $p.n } }
+    # The results group: every line under a label (Write-LcLabeled), continuation lines under ''.
+    Write-LcGap
     $crash = $b.Error
     if (-not $crash -and -not $m.TimedOut -and $m.Code -ne 0) {
         if ($m.Code -eq 2 -and -not $b.Pending) { Exit-Lc 1 }  # the runner printed the problem
         $crash = $b.Pending
         # No size pending: the untimed allocation rerun of the largest finished (not capped) size crashed.
         if (-not $crash -and $lastDone) { $crash = @{ n = $lastDone; seed = $seed } }
-        if (-not $crash) { Write-Host "  CRASH: $(Explain $m.Code)" -ForegroundColor Red; Exit-LcFailedAnalyze 'crash' $b.Points }
+        if (-not $crash) { Write-LcLabeled 'growth' "CRASH: $(Explain $m.Code)" 'Red'; Exit-LcFailedAnalyze 'crash' $b.Points }
     }
     if ($crash) {
-        Write-Host "Your solution crashed on a random input of size $($crash.n) (random inputs only follow ranges, sorted and distinct, so they may break other promises)." -ForegroundColor Red
-        if ($crash.error) { Write-Host $crash.error -ForegroundColor Red }  # the solution threw
+        Write-LcLabeled 'growth' "Your solution crashed on a random input of size $($crash.n) (random inputs only follow ranges, sorted and distinct, so they may break other promises)." 'Red'
+        if ($crash.error) { Write-LcLabeled '' $crash.error 'Red' }  # the solution threw
         # R14: gen at exactly that size and seed rebuilds the input bench used.
         $genPath = Join-Path $buildDir 'bench-crash.txt'
         Remove-Item -LiteralPath $genPath -ErrorAction SilentlyContinue
@@ -278,10 +291,10 @@ if ($Mode -eq 'analyze') {
                 elseif ($l.StartsWith('ops ')) { $ops = $l.Substring(4) }
                 elseif ($l.StartsWith('args ')) { $dargs = $l.Substring(5) }
             }
-            if ($info.Kind -eq 'design') { Write-Host "Input`n$ops`n$dargs" }
-            else { Write-Host (Format-LcInputLine -Info $info -Values ([string[]]$vals)) }
+            if ($info.Kind -eq 'design') { foreach ($l in 'Input', $ops, $dargs) { Write-LcLabeled '' $l } }
+            else { Write-LcLabeled '' (Format-LcInputLine -Info $info -Values ([string[]]$vals)) }
         }
-        foreach ($a in $spec.Assumed) { Write-Host $a -ForegroundColor DarkGray }
+        Write-LcAssumed
         Exit-LcFailedAnalyze 'crash' $b.Points
     }
 
@@ -292,21 +305,22 @@ if ($Mode -eq 'analyze') {
     elseif ($stopped) { $cx = 'too few sizes to tell'; $what = $cx }
     else { $cx = 'too fast to measure'; $what = $cx }
     if ($design -and -not $fit.TooFast) { $cx += ' per call' }
-    $head = if ($design) { 'Per call: ' } else { 'Complexity: ' }
-    Write-Host "$head$what (random inputs; worst case may differ)"
+    $growth = $what
+    if ($design -and -not $fit.TooFast) { $growth += ' per call' }
+    if (-not $fit.TooFast) { $growth += '   (random inputs; worst case may differ)' }
+    Write-LcLabeled 'growth' $growth
     $pts = @($b.Points)
     # Design problems show the cost per call (spec); the fit and the estimate use the totals.
-    $fmt = if ($design) { { "n=$($_.n) $(Format-LcPerCallUs $_.per_call_us)" } } else { { "n=$($_.n) $(Format-LcDuration $_.ms)" } }
-    if ($pts.Count) { Write-Host ('  ' + (@($pts | ForEach-Object $fmt) -join ' | ')) }
+    if ($pts.Count) { foreach ($l in (Format-LcPointsTable $pts -PerCall:$design)) { Write-LcLabeled '' $l } }
     if ($m.TimedOut) {
         # Nothing pending: the allocation rerun of the largest finished size was still running.
         $n = '?'
         if ($b.Pending) { $n = $b.Pending.n } elseif ($lastDone) { $n = $lastDone }
-        Write-Host ("  stopped at n={0}: still running after {1} s" -f $n, ($limitMs / 1000))
+        Write-LcLabeled '' ("stopped at n = {0}: still running after {1} s" -f $n, ($limitMs / 1000))
     } elseif ($b.Capped -and $b.Capped.Predicted) {
-        Write-Host "  stopped before n=$($b.Capped.n) (est. $(Format-LcDuration $b.Capped.ms), over the $($capMs / 1000) s cap)"
+        Write-LcLabeled '' "stopped before n = $($b.Capped.n) (est. $(Format-LcDuration $b.Capped.ms), over the $($capMs / 1000) s cap)"
     } elseif ($b.Capped) {
-        Write-Host "  stopped after n=$($b.Capped.n) (over the $($capMs / 1000) s cap)"
+        Write-LcLabeled '' "stopped after n = $($b.Capped.n) (over the $($capMs / 1000) s cap)"
     }
 
     # The time at the largest n: measured when bench got there, else the fit's estimate; never below a cap.
@@ -320,13 +334,13 @@ if ($Mode -eq 'analyze') {
     if ($m.TimedOut -and $est -lt $limitMs) { $est = [double]$limitMs; $prefix = '> ' }
     $verdict = Get-LcTleVerdict $est
     $color = switch ($verdict) { 'ok' { 'Green' } 'borderline' { 'Yellow' } default { 'Red' } }
-    Write-Host "At n = ${maxN}: est. $prefix$(Format-LcDuration $est) -> $verdict" -ForegroundColor $color
+    Write-LcLabeled 'TLE' "est. $prefix$(Format-LcDuration $est) at n = $maxN -> $verdict" $color
     $al = $b.Alloc
     if ($al) {
-        if ($al.count -eq 0) { Write-Host "Allocations at n=$($al.n): none" }
+        if ($al.count -eq 0) { Write-LcLabeled 'memory' "no allocations at n = $($al.n)" }
         else {
             $word = if ($al.count -eq 1) { 'alloc' } else { 'allocs' }
-            Write-Host "Allocations at n=$($al.n): $($al.count) $word, $(Format-LcBytes $al.bytes) total, peak $(Format-LcBytes $al.peak)"
+            Write-LcLabeled 'memory' "$($al.count) $word, $(Format-LcBytes $al.bytes) total, peak $(Format-LcBytes $al.peak) at n = $($al.n)"
         }
     }
     # Call counts and recursion depth: one input (same seed) at the largest size bench timed under 20 ms
@@ -349,9 +363,8 @@ if ($Mode -eq 'analyze') {
     }
     if ($prof.Count) {
         $callsLine = Format-LcCallsLine -N $profN -Profile $prof
-        if ($callsLine) { Write-Host $callsLine }
+        if ($callsLine) { Write-LcLabeled 'calls' $callsLine }
     }
-    foreach ($a in $spec.Assumed) { Write-Host $a -ForegroundColor DarkGray }
 
     $data = [ordered]@{
         complexity = $cx
@@ -377,21 +390,25 @@ if ($Mode -eq 'analyze') {
         $anyOrder = $false
         try { $anyOrder = (Test-Path -LiteralPath $testFile) -and [bool](Read-LcTestFile -Path $testFile -Info $info).AnyOrder } catch {}
         $bc = Invoke-LcBruteCheck -SrcPath $src -BrutePath $bruteFile -Info $info -SpecPath $specPath -AnyOrder:$anyOrder -TimeoutMs $limitMs
-        if ($bc.Errors) { Write-Host "Brute force: $slug.brute.cpp doesn't build" -ForegroundColor Red; Write-Host (Remove-LcUserTuLines $bc.Errors) }
+        if ($bc.Errors) {
+            Write-LcLabeled 'brute' "$slug.brute.cpp doesn't build" 'Red'
+            Write-LcGppDiagnostics (Remove-LcUserTuLines $bc.Errors) $src
+        }
         elseif ($null -ne $bc.Crashed) {
             $how = if ($bc.TimedOut) { 'timed out' } else { 'crashed' }
             $at = if ($bc.Crashed -gt 0) { " on case $($bc.Crashed)" } else { '' }  # 0: no case to blame
-            Write-Host "brute force $how$at" -ForegroundColor Red
+            Write-LcLabeled 'brute' "brute force $how$at" 'Red'
         } elseif ($bc.Mismatch) {
-            Write-Host 'Brute force: MISMATCH' -ForegroundColor Red
-            Write-Host $bc.Mismatch.Input
-            Write-Host "yours: $($bc.Mismatch.Got)   brute: $($bc.Mismatch.Expected)"
+            Write-LcLabeled 'brute' 'MISMATCH' 'Red'
+            foreach ($l in @($bc.Mismatch.Input -split '\r?\n')) { Write-LcLabeled '' $l }
+            Write-LcLabeled '' "yours: $($bc.Mismatch.Got)   brute: $($bc.Mismatch.Expected)"
             $data.brute = [ordered]@{ cases = $bc.Cases; mismatch_input = $bc.Mismatch.Input }
         } else {
-            Write-Host "Brute force: $($bc.Cases) random cases agree" -ForegroundColor Green
+            Write-LcLabeled 'brute' "$($bc.Cases) random cases agree" 'Green'
             $data.brute = [ordered]@{ cases = $bc.Cases }
         }
     }
+    Write-LcAssumed
     Add-LcEvent 'analyze_run' $data
     [void](Save-LcSnapshot -Root $JourneyRoot -Slug $slug -SrcPath $src -SrcHash $srcHash)
     Update-LcJourney
@@ -422,7 +439,8 @@ $build = Build-LcExe -SrcPath $src -HarnessText $harnessText -UserText $userText
 $jRun.CompileOk = [bool]$build.Ok
 $jRun.CompileMs = $build.Ms
 if (-not $build.Ok) { Write-LcBuildFailure $build; Exit-Lc 1 }
-if ($build.Warnings) { Write-Host (Remove-LcUserTuLines $build.Warnings) }
+Write-LcBuildWarnings $build
+Write-LcGap  # the results group
 
 # ---- run ----
 $buildDir = Split-Path -Parent $build.Exe

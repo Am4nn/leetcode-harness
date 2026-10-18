@@ -59,7 +59,7 @@
             Assert-Equal $r.Code 0 "e2e: $slug exit code`n$($r.Out)"
             Assert-Match $r.Out '\d+/\d+ passed'
             Assert-True ($r.Out -notmatch '(?m)^\s*FAIL\b') "e2e: $slug has FAIL lines`n$($r.Out)"
-            Assert-True ($r.Out -notmatch 'warning:') "e2e: $slug printed warnings`n$($r.Out)"
+            Assert-True ($r.Out -notmatch '(?m)warning:|^warning ') "e2e: $slug printed warnings`n$($r.Out)"
             $tf = Join-Path $tmp "tests\$slug.txt"
             Assert-True (Test-Path -LiteralPath $tf) "e2e: tests/$slug.txt not created"
             Assert-True ([IO.File]::ReadAllText($tf).StartsWith("# $($titles[$slug]) (#")) "e2e: tests/$slug.txt header"
@@ -174,7 +174,28 @@
         Copy-Item (Join-Path $repo 'leetcode-solves\concatenation-of-array.cpp') $mm
         Copy-Item (Join-Path $tmp 'tests\.meta\concatenation-of-array.json') (Join-Path $mm 'tests\.meta')
         $r = Invoke-Lc (Join-Path $mm 'concatenation-of-array.cpp')
-        Assert-True $r.Out.Contains('LeetCode expects getConcatenation(nums) but your Solution has shuffle(nums, n)') "e2e: method mismatch`n$($r.Out)"
+        Assert-True $r.Out.Contains("`n! LeetCode expects getConcatenation(nums), your Solution has shuffle(nums, n)") "e2e: method mismatch`n$($r.Out)"
+        # Analyze: the label-column layout - header and mismatch, g++ warnings, results, one blank line between
+        [IO.File]::WriteAllText((Join-Path $mm 'concatenation-of-array.cpp'), ("class Solution {`npublic:`n    vector<int> shuffle(vector<int>& nums, int n) {`n" +
+            "        n = min<int>(n, nums.size() / 2);`n        vector<int> ans(2 * n);`n        for (size_t i = 0; i < n; ++i) {`n" +
+            "            ans[2 * i] = nums[i];`n            ans[2 * i + 1] = nums[i + n];`n        }`n        return ans;`n    }`n};`n"), $utf8)
+        $r = Invoke-Lc (Join-Path $mm 'concatenation-of-array.cpp') -Mode analyze
+        Assert-Equal $r.Code 0 "e2e: analyze mismatch exit code`n$($r.Out)"
+        $outLines = @($r.Out.TrimEnd() -split '\r?\n')
+        Assert-Equal $outLines.Count 11 "e2e: analyze layout lines`n$($r.Out)"
+        Assert-Equal $outLines[0] 'concatenation-of-array  (#1929 Easy - Array, Simulation)'
+        Assert-Equal $outLines[1] '! LeetCode expects getConcatenation(nums), your Solution has shuffle(nums, n)'
+        Assert-Equal $outLines[2] ''
+        Assert-Equal $outLines[3] "warning  line 6: comparison of integer expressions of different signedness: 'size_t' and 'int'"
+        Assert-Equal $outLines[4] '             for (size_t i = 0; i < n; ++i) {'
+        Assert-Equal $outLines[5] ''
+        Assert-Match $outLines[6] '^growth   looks O\(.+\)   \(random inputs; worst case may differ\)$'
+        Assert-Match $outLines[7] '^         n     \d+( +\d+){4}$'
+        Assert-Match $outLines[8] '^         time  [0-9.]+(us|ms|s)( +[0-9.]+(us|ms|s)){4}$'
+        Assert-Match $outLines[9] '^TLE      est\. [0-9.]+ [mu]?s at n = 100000 -> ok$'
+        Assert-Match $outLines[10] '^memory   1 alloc, [0-9.]+ [KM]?B total, peak [0-9.]+ [KM]?B at n = 100000$'
+        $a = @(Read-LcEvents $journey)[-1]
+        Assert-True ($a.event -eq 'analyze_run' -and @($a.points).Count -gt 5) "e2e: analyze_run keeps every point $($a | ConvertTo-Json -Compress)"
 
         # e2e: timeout names the running case
         $r = Invoke-Lc (Join-Path $tmp 'slow\climbing-stairs.cpp') @('-TimeoutMs', '2000')
@@ -256,8 +277,8 @@
         foreach ($k in 1, 2) {
             $r = Invoke-Lc (Join-Path $tmp 'odd\warn.cpp')
             Assert-Equal $r.Code 0 "e2e: warnings run $k`n$($r.Out)"
-            Assert-Match $r.Out "(?s)warn\.cpp:4:\d+: warning: unused variable 'unused'.*PASS  1  4.*1/1 passed"
-            Assert-True ($r.Out -notmatch '-user\.cpp') "e2e: warnings name the generated user TU`n$($r.Out)"
+            Assert-Match $r.Out "^warn\r?\n\r?\nwarning  line 4: unused variable 'unused'\r?\n {13}int unused = 0;\r?\n\r?\n  PASS  1  4 .*\r?\n1/1 passed\s*$"
+            Assert-True ($r.Out -notmatch '-user\.cpp|warn\.cpp|\[-W') "e2e: warnings show a path or flag`n$($r.Out)"
         }
 
         # e2e: an auto return type gets one line, not a compile
@@ -287,7 +308,7 @@
         [IO.File]::AppendAllText($twoSum, "int broken = undefined_name;`n", $utf8)
         $r = Invoke-Lc $twoSum
         Assert-Equal $r.Code 1 "e2e: compile error exit code`n$($r.Out)"
-        Assert-Match $r.Out "two-sum\.cpp:\d+:\d+: error: 'undefined_name' was not declared"
+        Assert-Match $r.Out "^two-sum  \(#1 Easy - Array, Hash Table\)\r?\n\r?\nerror    line \d+: 'undefined_name' was not declared in this scope\r?\n {13}int broken = undefined_name;\s*$"
         Assert-True ($r.Out -notmatch '-user\.cpp') "e2e: compile error names the generated user TU`n$($r.Out)"
         $tr = @(Read-LcEvents $journey)[-1]
         Assert-True ($tr.event -eq 'test_run' -and $tr.compile_ok -eq $false -and @($tr.cases).Count -eq 0) "e2e: compile error test_run $($tr | ConvertTo-Json -Compress)"
@@ -296,6 +317,7 @@
         $r = Invoke-Lc $twoSum -Mode analyze
         Assert-Equal $r.Code 1 "e2e: analyze build error exit code`n$($r.Out)"
         Assert-True ($r.Out -notmatch '-user\.cpp') "e2e: analyze build error names the generated user TU`n$($r.Out)"
+        Assert-Match $r.Out "^two-sum  \(#1 Easy - Array, Hash Table\)\r?\n\r?\nerror    line \d+: 'undefined_name' was not declared in this scope\r?\n {13}int broken = undefined_name;\s*$"
         $a = @(Read-LcEvents $journey)[-1]
         Assert-True ($a.event -eq 'analyze_run' -and $a.status -eq 'build_error' -and $null -eq $a.complexity -and $null -eq $a.points -and
             $null -eq $a.tle_risk -and $null -eq $a.alloc -and $null -eq $a.calls) "e2e: analyze build_error $($a | ConvertTo-Json -Compress)"
@@ -353,37 +375,41 @@
         $r = Invoke-Lc (Join-Path $tmp 'variants\two-sum.cpp') -Mode analyze
         Assert-Equal $r.Code 0 "e2e: analyze variant exit code`n$($r.Out)"
         Assert-Match $r.Out 'looks O\(n\^2\)'
-        Assert-Match $r.Out '(?m)^At n = 100000: est\. .* -> likely TLE\s*$'
+        Assert-Match $r.Out '(?m)^TLE      est\. .* at n = 100000 -> likely TLE\s*$'
         $r = Invoke-Lc $twoSum -Mode analyze
         Assert-Equal $r.Code 0 "e2e: analyze two-sum exit code`n$($r.Out)"
         $outLines = @($r.Out.TrimEnd() -split '\r?\n')
-        Assert-Equal $outLines.Count 4 "e2e: analyze output lines`n$($r.Out)"
-        Assert-Match $outLines[0] '^Complexity: looks O\(n( log n)?\) \(random inputs; worst case may differ\)$'
-        Assert-Match $outLines[1] '^  n=\d+ [0-9.]+ [mu]?s( \| n=\d+ [0-9.]+ [mu]?s)+$'
-        Assert-Match $outLines[2] '^At n = 10000: est\. [0-9.]+ ms -> ok$'
-        Assert-Match $outLines[3] '^Allocations at n=10000: \d+ allocs, [0-9.]+ [KM]?B total, peak [0-9.]+ [KM]?B$'
+        Assert-Equal $outLines.Count 7 "e2e: analyze output lines`n$($r.Out)"
+        Assert-Equal $outLines[0] 'two-sum  (#1 Easy - Array, Hash Table)'
+        Assert-Equal $outLines[1] ''
+        Assert-Match $outLines[2] '^growth   looks O\(n( log n)?\)   \(random inputs; worst case may differ\)$'
+        Assert-Match $outLines[3] '^         n     \d+( +\d+){1,4}$'
+        Assert-Match $outLines[4] '^         time  [0-9.]+(us|ms|s)( +[0-9.]+(us|ms|s)){1,4}$'
+        Assert-Match $outLines[5] '^TLE      est\. [0-9.]+ [mu]?s at n = 10000 -> ok$'
+        Assert-Match $outLines[6] '^memory   \d+ allocs, [0-9.]+ [KM]?B total, peak [0-9.]+ [KM]?B at n = 10000$'
         # R40: no Calls line when every function ran once; the event still has the counts
         $a = @(Read-LcEvents $journey | Where-Object { $_.event -eq 'analyze_run' })[-1]
         Assert-True ($a.calls.twoSum.count -eq 1 -and $a.calls.twoSum.depth -eq 1) "e2e: two-sum analyze_run calls $($a | ConvertTo-Json -Compress)"
         # Task 13: a correct brute force next to the naive recursion agrees on every random case
         Copy-Item (Join-Path $tmp 'bugged\tests\climbing-stairs.brute.cpp') (Join-Path $tmp 'tests')
         $r = Invoke-Lc (Join-Path $tmp 'climbing-stairs.cpp') -Mode analyze
-        Assert-Match $r.Out '(?m)^Brute force: 200 random cases agree\s*$'
-        Assert-Match $r.Out 'looks O\(2\^n\)'
-        Assert-Match $r.Out '(?m)^Allocations at n=45: none\s*$'
+        Assert-Match $r.Out '(?m)^brute    200 random cases agree\s*$'
+        Assert-Match $r.Out '(?m)^growth   looks O\(2\^n\)'
+        Assert-Match $r.Out '(?m)^memory   no allocations at n = 45\s*$'
+        # Results: growth, its table, TLE, memory, calls, brute - in that order, one group
+        Assert-Match $r.Out '(?s)\r?\n\r?\ngrowth .*\r?\n {9}n .*\r?\n {9}time .*\r?\nTLE .*\r?\nmemory .*\r?\ncalls .*\r?\nbrute .*$'
         # Task 12: call counts and recursion depth (profile build) at the largest size timed under 20 ms (R38)
-        Assert-True ($r.Out -match '(?m)^Calls \(n=(\d+)\): climbStairs: [0-9,]+ calls, max depth \d+\s*$') "e2e: climbing-stairs Calls line`n$($r.Out)"
+        Assert-True ($r.Out -match '(?m)^calls    climbStairs: [0-9,]+ calls, max depth \d+ at n = (\d+)\s*$') "e2e: climbing-stairs calls line`n$($r.Out)"
         $callsN = [long]$Matches[1]
-        # Durations under 0.01 ms print in us; both count as under 20 ms.
-        $under = @([regex]::Matches($r.Out, 'n=(\d+) ([0-9.]+) (ms|us)') |
-            Where-Object { $_.Groups[3].Value -eq 'us' -or [double]::Parse($_.Groups[2].Value, [Globalization.CultureInfo]::InvariantCulture) -lt 20 } | ForEach-Object { [long]$_.Groups[1].Value })
-        Assert-Equal $callsN ($under | Measure-Object -Maximum).Maximum "e2e: Calls n is the largest size under 20 ms`n$($r.Out)"
         $a = @(Read-LcEvents $journey | Where-Object { $_.event -eq 'analyze_run' })[-1]
+        $under = @(@($a.points) | Where-Object { [double]$_.ms -lt 20 } | ForEach-Object { [long]$_.n })
+        Assert-Equal $callsN ($under | Measure-Object -Maximum).Maximum "e2e: calls n is the largest size under 20 ms`n$($r.Out)"
         Assert-True ($a.calls.climbStairs.count -gt 1000 -and $a.calls.climbStairs.depth -gt 10) "e2e: analyze_run calls $($a | ConvertTo-Json -Compress)"
         $r = Invoke-Lc (Join-Path $tmp 'lru-cache.cpp') -Mode analyze
-        Assert-Match $r.Out '(?m)^Per call: looks O\(1\) \(random inputs; worst case may differ\)'
-        Assert-Match $r.Out '(?m)^  n=\d+ [0-9.]+ us/call( \| n=\d+ [0-9.]+ us/call)+\s*$'
-        Assert-Match $r.Out '(?m)^At n = 200000: est\. '
+        Assert-Match $r.Out '(?m)^growth   looks O\(1\) per call   \(random inputs; worst case may differ\)'
+        Assert-Match $r.Out '(?m)^ {9}n {9}\d+( +\d+)+\s*$'
+        Assert-Match $r.Out '(?m)^ {9}per call  [0-9.]+us( +[0-9.]+us)+\s*$'
+        Assert-Match $r.Out '(?m)^TLE      est\. .* at n = 200000 -> '
         $an = @(Read-LcEvents $journey | Where-Object { $_.event -eq 'analyze_run' })
         Assert-Equal ($an.Count - $evBefore) 4 'e2e: analyze_run events'
         $a = $an[-1]
@@ -397,7 +423,7 @@
         # e2e: Task 13 - the brute force finds the bugged memo version's first wrong case (n % 7 == 0)
         $r = Invoke-Lc (Join-Path $tmp 'bugged\climbing-stairs.cpp') -Mode analyze
         Assert-Equal $r.Code 0 "e2e: analyze bugged exit code`n$($r.Out)"
-        Assert-Match $r.Out '(?m)^Brute force: MISMATCH\r?\nInput: n = (7|14|21|28|35|42)\r?\nyours: \d+   brute: \d+\s*$'
+        Assert-Match $r.Out '(?m)^brute    MISMATCH\r?\n {9}Input: n = (7|14|21|28|35|42)\r?\n {9}yours: \d+   brute: \d+\s*$'
         $a = @(Read-LcEvents $journey | Where-Object { $_.event -eq 'analyze_run' })[-1]
         Assert-True ($a.brute.cases -eq 200 -and $a.brute.mismatch_input -match '^Input: n = (7|14|21|28|35|42)$') "e2e: analyze_run brute $($a | ConvertTo-Json -Compress)"
 
@@ -409,9 +435,10 @@
         $r = Invoke-Lc (Join-Path $an 'big-crash.cpp') -Mode analyze
         Assert-Equal $r.Code 1 "e2e: analyze crash exit code`n$($r.Out)"
         $outLines = @($r.Out.TrimEnd() -split '\r?\n')
-        Assert-Equal $outLines[0] 'Your solution crashed on a random input of size 1562 (random inputs only follow ranges, sorted and distinct, so they may break other promises).'
-        Assert-True ($outLines[1] -match '^Input: nums = \[(-?\d+,){1561}-?\d+\]$') "e2e: crash input`n$($outLines[1].Substring(0, [Math]::Min(200, $outLines[1].Length)))"
-        Assert-Equal $outLines[2] '(assumed: no constraint found for nums)'
+        Assert-Equal ($outLines[0..1] -join '|') 'big-crash|'
+        Assert-Equal $outLines[2] 'growth   Your solution crashed on a random input of size 1562 (random inputs only follow ranges, sorted and distinct, so they may break other promises).'
+        Assert-True ($outLines[3] -match '^ {9}Input: nums = \[(-?\d+,){1561}-?\d+\]$') "e2e: crash input`n$($outLines[3].Substring(0, [Math]::Min(200, $outLines[3].Length)))"
+        Assert-Equal $outLines[4] 'note     assumed: no constraint found for nums'
         # A crashed analyze is an analyze_run with status crash: the sizes timed before it, null for the rest
         $a = @(Read-LcEvents $journey)[-1]
         Assert-True ($a.event -eq 'analyze_run' -and $a.status -eq 'crash' -and @($a.points).Count -ge 3 -and $null -eq $a.complexity -and
@@ -422,16 +449,16 @@
         $r = Invoke-Lc (Join-Path $an 'big-throw.cpp') -Mode analyze
         Assert-Equal $r.Code 1 "e2e: analyze exception exit code`n$($r.Out)"
         $outLines = @($r.Out.TrimEnd() -split '\r?\n')
-        Assert-Match $outLines[0] '^Your solution crashed on a random input of size 1562 '
-        Assert-Equal $outLines[1] 'exception: boom'
-        Assert-True ($outLines[2] -match '^Input: nums = \[(-?\d+,){1561}-?\d+\]$') "e2e: exception input"
+        Assert-Match $outLines[2] '^growth   Your solution crashed on a random input of size 1562 '
+        Assert-Equal $outLines[3] '         exception: boom'
+        Assert-True ($outLines[4] -match '^ {9}Input: nums = \[(-?\d+,){1561}-?\d+\]$') "e2e: exception input"
 
         # e2e: R5 backstop - a run still going after the timeout is killed and reported as a cap
         [IO.File]::WriteAllText((Join-Path $an 'hang.cpp'), ("class Solution {`npublic:`n    int spin(vector<int>& nums) {`n" +
             "        volatile int x = 0;`n        if (nums.size() > 1000) while (true) x++;`n        for (int v : nums) x += v;`n        return x;`n    }`n};`n"), $utf8)
         $r = Invoke-Lc (Join-Path $an 'hang.cpp') @('-TimeoutMs', '3000') -Mode analyze
         Assert-Equal $r.Code 0 "e2e: analyze backstop exit code`n$($r.Out)"
-        Assert-Match $r.Out '(?m)^  stopped at n=1562: still running after 3 s\s*$'
+        Assert-Match $r.Out '(?m)^ {9}stopped at n = 1562: still running after 3 s\s*$'
         Assert-True ($r.Ms -lt 20000) "e2e: analyze backstop took $($r.Ms) ms"
         $a = @(Read-LcEvents $journey)[-1]
         Assert-True ($a.event -eq 'analyze_run' -and @($a.PSObject.Properties.Name) -contains 'alloc' -and $null -eq $a.alloc) "e2e: analyze_run alloc null $($a | ConvertTo-Json -Compress)"
@@ -443,8 +470,8 @@
         [IO.File]::WriteAllText((Join-Path $an 'tests\grid-sum.txt'), "Constraints:`n1 <= grid.length <= 200`n-100 <= grid[i][j] <= 100`n`nInput: grid = [[1,2],[3,4]]`nOutput: 10`n", $utf8)
         $r = Invoke-Lc (Join-Path $an 'grid-sum.cpp') -Mode analyze
         Assert-Equal $r.Code 0 "e2e: analyze grid exit code`n$($r.Out)"
-        Assert-Match $r.Out '(?m)^At n = 40000: est\. '
-        $ns = @([regex]::Matches($r.Out, 'n=(\d+) ') | ForEach-Object { [long]$_.Groups[1].Value })
+        Assert-Match $r.Out '(?m)^TLE      est\. .* at n = 40000 -> '
+        $ns = @(@(@(Read-LcEvents $journey)[-1].points) | ForEach-Object { [long]$_.n })
         Assert-True ($ns.Count -ge 3 -and ($ns | Measure-Object -Maximum).Maximum -gt 10000) "e2e: grid points are cells`n$($r.Out)"
 
         # e2e: the real dsa/journey was never written

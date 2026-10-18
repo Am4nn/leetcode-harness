@@ -49,9 +49,9 @@
     Assert-True ($null -eq (Get-LcInfoFromSource 'int main() {}'))
 
     $msg = Test-LcMethodMatch (Get-LcInfoFromMeta $concatMeta) $src
-    Assert-Equal $msg "LeetCode expects getConcatenation(nums) but your Solution has shuffle(nums, n)"
+    Assert-Equal $msg "LeetCode expects getConcatenation(nums), your Solution has shuffle(nums, n)"
     Assert-True ($null -eq (Test-LcMethodMatch $rot "class Solution { public: void rotate(vector<int>& nums, int k) {} };"))
-    Assert-Equal (Test-LcMethodMatch $lru $src) "LeetCode expects class LRUCache but your file doesn't define it"
+    Assert-Equal (Test-LcMethodMatch $lru $src) "LeetCode expects class LRUCache, your file doesn't define it"
     Assert-True ($null -eq (Test-LcMethodMatch $lru "class LRUCache { public: LRUCache(int c) {} };"))
 
     # Return types and explicit out indexes.

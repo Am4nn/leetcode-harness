@@ -214,13 +214,13 @@ function Get-LcInfoFromSource([string]$srcText) {
 function Test-LcMethodMatch($metaInfo, [string]$srcText) {
     if ($metaInfo.Kind -eq 'design') {
         if ($srcText -match "\b(class|struct)\s+$([regex]::Escape($metaInfo.Class))\b") { return $null }
-        return "LeetCode expects class $($metaInfo.Class) but your file doesn't define it"
+        return "LeetCode expects class $($metaInfo.Class), your file doesn't define it"
     }
     $expected = "$($metaInfo.Method)($($metaInfo.ParamNames -join ', '))"
     $si = Get-LcInfoFromSource $srcText
-    if (-not $si) { return "LeetCode expects $expected but your file has no class Solution with a public method" }
+    if (-not $si) { return "LeetCode expects $expected, your file has no class Solution with a public method" }
     foreach ($m in $si.AllMethods) { if ($m.Name -eq $metaInfo.Method) { return $null } }
-    return "LeetCode expects $expected but your Solution has $($si.Method)($($si.ParamNames -join ', '))"
+    return "LeetCode expects $expected, your Solution has $($si.Method)($($si.ParamNames -join ', '))"
 }
 
 function New-LcNameList([string[]]$names) {
