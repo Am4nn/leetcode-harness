@@ -65,6 +65,24 @@
         Assert-Match $ctx '== Journey: rotate-array'
         Assert-Match $ctx 'status: attempted, never passed locally; Alt\+F7 runs: 1'
         Assert-Match $ctx '== Other recent runs'
+        Assert-True ($ctx -notmatch "== Memory|== Solves the coach hasn't read") "runlog: empty memory sections shown`n$ctx"
+
+        # Memory and the solves the coach hasn't read
+        $coachPs1 = Join-Path $repo '.zed\lc-coach.ps1'
+        $null = powershell -NoProfile -ExecutionPolicy Bypass -File $coachPs1 remember -Kind habit -Text 'Loop bound off by one' -JourneyRoot $journey 2>&1 | Out-String
+        . (Join-Path $repo '.zed\lc\journey.ps1')
+        Write-LcEvent -Root $journey -Event solved -Slug 'rotate-array' -File 'solves\rotate-array.cpp' -SrcHash 'abc123abc123'
+        $ctx = Invoke-Ctx
+        Assert-Match $ctx '(?m)^== Memory\r?\nhabit:\r?\n- \[m[0-9a-f]{6}\] Loop bound off by one'
+        Assert-Match $ctx "(?m)^== Solves the coach hasn't read\r?\n\s+rotate-array\b"
+        Assert-True ($ctx.IndexOf('== Memory') -lt $ctx.IndexOf('== Other recent runs')) 'runlog: memory after the journey, before other runs'
+        $null = powershell -NoProfile -ExecutionPolicy Bypass -File $coachPs1 read -Slug rotate-array -JourneyRoot $journey 2>&1 | Out-String
+        $ctx = Invoke-Ctx
+        Assert-True ($ctx -notmatch "== Solves the coach hasn't read") "runlog: read solve still listed`n$ctx"
+        Assert-Match $ctx '== Memory'
+        # A newer solved version is unread again
+        Write-LcEvent -Root $journey -Event solved -Slug 'rotate-array' -File 'solves\rotate-array.cpp' -SrcHash 'def456def456'
+        Assert-Match (Invoke-Ctx) "== Solves the coach hasn't read"
 
         # Edited after the run: the context says so and shows the change
         [IO.File]::WriteAllText($src, ([IO.File]::ReadAllText($src) -replace 'nums\[nums\.size\(\)\] = k;', 'nums[0] = k;'), $utf8)

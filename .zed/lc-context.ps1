@@ -1,6 +1,7 @@
 # What a coding agent needs before answering about my code: a logged run (.zed/lc/runlog.ps1) with its
 # key, file and terminal output, the file's source now with line numbers and what changed since that run,
-# the problem's cases and its journey. Read-only.
+# the problem's cases and its journey, plus the coach's memory and the solves it hasn't read. Changes nothing
+# except that reading memory writes back facts that have aged (habits unseen for 14+ days, passed until dates).
 #   (no args)      the file I'm working on: the newest .cpp I saved, when that's newer than the latest run
 #                  (with its own latest run, if it has one); else the latest run
 #   -Run 2         the run before it (1 = latest)
@@ -20,6 +21,7 @@ param(
 
 . (Join-Path $PSScriptRoot 'lc\journey.ps1')
 . (Join-Path $PSScriptRoot 'lc\runlog.ps1')
+. (Join-Path $PSScriptRoot 'lc\memory.ps1')
 
 $dsaRoot = Split-Path -Parent $PSScriptRoot
 if (-not $JourneyRoot) { $JourneyRoot = Join-Path $dsaRoot 'journey' }
@@ -238,6 +240,19 @@ if ($working) {
 Write-LcProblem $slug
 Write-LcCases $slug
 Write-LcJourney $slug
+
+$memLines = @(Format-LcMemory (Read-LcMemory (Join-Path $JourneyRoot 'local')))
+if ($memLines.Count) {
+    ''
+    '== Memory'
+    $memLines
+}
+$unread = @(Get-LcUnreadSolves $JourneyRoot)
+if ($unread.Count) {
+    ''
+    "== Solves the coach hasn't read"
+    foreach ($s in $unread) { "  $s" }
+}
 
 $others = @($allLogs | Select-Object -First 6 | Where-Object { -not $r -or $_.FullName -ne $r.Path } | Select-Object -First 5)
 if ($others.Count) {
