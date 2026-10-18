@@ -104,9 +104,11 @@ Write a slow, obviously correct version as `cases/<slug>/brute.cpp`, as a normal
 Everything lands in `journey/`:
 
 - `events.jsonl`: one JSON line per action (fetch, test run, solve, analyze, note). Nothing is ever deleted from it. It's meant to feed a web view of progress and patterns later.
-- `journey.md`: a table with one row per problem. Columns: date solved, difficulty, tags, complexity, slowest case time, attempts and your note.
+- `journey.md`: a table with one row per problem. Columns: date solved, status, difficulty, tags, complexity, slowest case time, attempts and your note.
 - `snapshots/<slug>/`: a copy of the solution each time it changes, so you can see it go from brute force to optimal.
 - `problems/<slug>.json`: the problem's title, difficulty, tags and examples as fetched from LeetCode, so runs work offline.
+
+Status is `accepted` once LeetCode has accepted a submission, `passed locally` when every local case passed, and `attempted` otherwise. To get `accepted`, put your LeetCode username (from `leetcode.com/u/<username>`) in `.zed/leetcode-user.txt`. The file is git-ignored, and each run then reads your public list of recent accepts, with no login. A run prints `LeetCode accepted: <slug>` when it finds a new one.
 
 When a problem passes for the first time, the solution, `cases/<slug>/` and `journey/` are committed automatically. Nothing is ever pushed.
 

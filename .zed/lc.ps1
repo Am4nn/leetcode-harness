@@ -32,6 +32,39 @@ $CasesRoot = [IO.Path]::GetFullPath($CasesRoot)
 $utf8 = New-Object Text.UTF8Encoding $false
 $inv = [Globalization.CultureInfo]::InvariantCulture
 
+# ---- LeetCode accepts: asked for now, read at the end (Complete-LcAccepted), so the run never waits on it ----
+# The username is in .zed/leetcode-user.txt (git-ignored). Self-tests set $env:LC_USER_FILE and
+# $env:LC_ACCEPTED_RESPONSE (a JSON file used instead of the network).
+$acTask = $null
+if (-not $Offline) {
+    $acUserFile = $env:LC_USER_FILE
+    if (-not $acUserFile) { $acUserFile = Join-Path $PSScriptRoot 'leetcode-user.txt' }
+    $acTask = Start-LcAcceptedFetch -UserFile $acUserFile -ResponsePath $env:LC_ACCEPTED_RESPONSE
+}
+
+# Writes an accepted event for each new LeetCode accept of a problem the journey knows, updates those
+# rows of journey.md and prints one line naming them. Silent when there are none or anything fails.
+function Complete-LcAccepted {
+    $t = $script:acTask
+    $script:acTask = $null
+    if ($null -eq $t) { return }
+    $list = @(Receive-LcAcceptedList $t)
+    if (-not $list.Count) { return }
+    try {
+        # The stale check (R31) before this writes events.jsonl.
+        $ev = [IO.FileInfo](Join-Path $JourneyRoot 'events.jsonl')
+        $md = [IO.FileInfo](Join-Path $JourneyRoot 'journey.md')
+        $stale = $script:jStale -or ($ev.Exists -and $md.Exists -and $ev.LastWriteTimeUtc -gt $md.LastWriteTimeUtc)
+        $new = @(Add-LcAcceptedEvents -Root $JourneyRoot -List $list)
+        if (-not $new.Count) { return }
+        $slugs = @($new | ForEach-Object { $_.slug } | Select-Object -Unique)
+        if ($null -ne $script:events) { foreach ($e in $new) { if ($e.slug -eq $slug) { [void]$script:events.Add($e) } } }
+        if ($stale) { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $problemsDir }
+        else { foreach ($s in $slugs) { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $problemsDir -Slug $s } }
+        Write-Host "LeetCode accepted: $($slugs -join ', ')" -ForegroundColor DarkGray
+    } catch { }
+}
+
 # ---- journey (silent): events, snapshot, journey.md, solve commit ----
 $events = $null   # this slug's events, read once on the first new event
 $jStale = $false  # events.jsonl was newer than journey.md before this run wrote anything (R31)
@@ -141,6 +174,7 @@ function Remove-LcUserTuLines([string]$Text) {
 }
 
 function Exit-Lc([int]$code) {
+    Complete-LcAccepted
     if ($null -ne $script:jRun) { Complete-LcJourney $code }
     if ($NoWait) { exit $code }
     Finish $code

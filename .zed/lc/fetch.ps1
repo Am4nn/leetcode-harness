@@ -55,6 +55,47 @@ function Get-LcCachedQuestion([string]$ProblemsDir, [string]$Slug, [switch]$Offl
     return @{ Question = $q; Fetched = $true; Tried = $true; NotProblem = $false }
 }
 
+# The user's recent accepted submissions (public profile, no login), started in the background.
+# Returns the request's Task[string], or $null when there is no username (missing or empty $UserFile).
+# -ResponsePath: a JSON file used as the response instead of the network (self-tests); a missing file
+# gives $null. Never throws.
+function Start-LcAcceptedFetch([string]$UserFile, [string]$ResponsePath = '') {
+    try {
+        if (-not $UserFile -or -not [IO.File]::Exists($UserFile)) { return $null }
+        $user = [IO.File]::ReadAllText($UserFile).Trim()
+        if (-not $user) { return $null }
+        if ($ResponsePath) {
+            if (-not [IO.File]::Exists($ResponsePath)) { return $null }
+            return [Threading.Tasks.Task]::FromResult([IO.File]::ReadAllText($ResponsePath, [Text.Encoding]::UTF8))
+        }
+        $body = @{
+            query     = 'query r($u:String!,$l:Int!){recentAcSubmissionList(username:$u,limit:$l){titleSlug timestamp}}'
+            variables = @{ u = $user; l = 20 }
+        } | ConvertTo-Json -Depth 5 -Compress
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $wc = New-Object Net.WebClient
+        $wc.Encoding = [Text.Encoding]::UTF8
+        $wc.Headers['Content-Type'] = 'application/json'
+        $wc.Headers['Referer'] = 'https://leetcode.com'
+        return $wc.UploadStringTaskAsync([Uri]'https://leetcode.com/graphql', $body)
+    } catch { return $null }
+}
+
+# Waits up to $WaitMs more for the request, then returns its list as @{ Slug; Time } objects
+# (Time: unix seconds), or an empty list on any failure. Never throws.
+function Receive-LcAcceptedList($Task, [int]$WaitMs = 1500) {
+    if ($null -eq $Task) { return @() }
+    try {
+        if (-not $Task.Wait($WaitMs) -or $Task.Status -ne 'RanToCompletion') { return @() }
+        $r = $Task.Result | ConvertFrom-Json
+        $out = foreach ($a in @($r.data.recentAcSubmissionList)) {
+            $t = 0L
+            if ($a.titleSlug -and [long]::TryParse([string]$a.timestamp, [ref]$t)) { @{ Slug = [string]$a.titleSlug; Time = $t } }
+        }
+        return @($out)
+    } catch { return @() }
+}
+
 function ConvertFrom-LcHtml([string]$html) {
     if (-not $html) { return '' }
     $t = $html -replace '(?is)<sup>(.*?)</sup>', '^$1'

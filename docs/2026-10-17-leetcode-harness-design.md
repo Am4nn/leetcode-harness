@@ -177,18 +177,29 @@ Common fields: `ts` (ISO local time with offset), `event`, `slug`, `file`, `src_
 | `analyze_run` | `status?: crash/build_error` (omitted on a run that produced a report), `complexity`, `points: [{n, ms, per_call_us?}]`, `tle_risk`, `alloc: {count, bytes, peak}`, `calls: {fn: {count, depth}}`, `brute?: {cases, mismatch_input?}`. A failed run sets what it doesn't know to null: `build_error` has every field null; `crash` keeps the `points` timed before the crash. `journey.md` takes `Complexity` from the latest `analyze_run` that has one. |
 | `note` | `text` |
 | `typed_case` | `input` (when a case is added via the terminal prompt) |
+| `accepted` | `submitted_at` (when LeetCode accepted it, same format as `ts`). `file` and `src_hash` are copied from the slug's latest event. See "LeetCode accepts" below. |
 
 **Snapshots (user confirmed):** when `src_hash` changes on a run, copy the solution to `dsa/journey/snapshots/<slug>/<ts>.cpp`. This lets the web view later show how a solution evolved, e.g. brute force to optimal. It's cheap: files are a few KB.
 
 **Journey log:** `dsa/journey/journey.md` is a markdown table regenerated from `events.jsonl` after each run. It has one row per problem, updated in place rather than duplicated:
 
-| Date | # | Problem | Difficulty | Tags | Complexity | Max time | Attempts | Note |
-|---|---|---|---|---|---|---|---|---|
+| Date | # | Problem | Status | Difficulty | Tags | Complexity | Max time | Attempts | Note |
+|---|---|---|---|---|---|---|---|---|---|
 
 - `Date` is the first solved date.
 - `Problem` links to `https://leetcode.com/problems/<slug>/`.
+- `Status` is `accepted` if there is an `accepted` event, else `passed locally` if there is a `solved` event, else `attempted`.
 - `Complexity` comes from the latest `analyze_run` with a complexity (blank until analyze has produced one).
 - `Note` is the latest note.
+
+**LeetCode accepts:** the harness only sees local cases, so it asks LeetCode which problems were accepted. The username comes from `.zed/leetcode-user.txt` (git-ignored). With no username, or with `-Offline`, none of this happens.
+
+- Each test or analyze run starts one request at its start: `recentAcSubmissionList` on the public GraphQL endpoint, no login, the last 20 accepts.
+- The run reads the answer just before it ends. If the answer isn't there yet, it waits at most 1.5 s more and then drops it. Network and parse errors are ignored.
+- An accept becomes an `accepted` event when the journey already has events for that slug, the accept is at or after the slug's first event, and no `accepted` event has the same `submitted_at`. So a problem you gave up on never shows as accepted, and reruns add nothing.
+- When new events were written, the run prints one gray line: `LeetCode accepted: <slug>, <slug>`.
+- These events aren't committed on their own. The next solve commit takes them along with `journey/`.
+- Self-tests set `LC_USER_FILE` (the username file) and `LC_ACCEPTED_RESPONSE` (a JSON file used instead of the network).
 
 ## Tasks and shortcuts
 

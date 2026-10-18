@@ -34,6 +34,15 @@
     $env:LC_BUILD_ROOT = Join-Path $env:TEMP 'lc-e2e-build'
     $userGch = Join-Path $repo 'build\pch\test\lc-all.h.gch'
     $userGchTime = $null
+    # LeetCode accepts: a username file and a response file stand in for .zed/leetcode-user.txt and the
+    # network, so no run (not even -Online) contacts LeetCode. The default response lists nothing.
+    $oldUserFile = $env:LC_USER_FILE; $oldAcResp = $env:LC_ACCEPTED_RESPONSE
+    $acDir = Join-Path $env:TEMP 'lc-e2e-accepted'
+    New-Item -ItemType Directory -Force $acDir | Out-Null
+    $env:LC_USER_FILE = Join-Path $acDir 'user.txt'
+    $env:LC_ACCEPTED_RESPONSE = Join-Path $acDir 'response.json'
+    [IO.File]::WriteAllText($env:LC_USER_FILE, "tester`n", $utf8)
+    [IO.File]::WriteAllText($env:LC_ACCEPTED_RESPONSE, '{"data":{"recentAcSubmissionList":[]}}', $utf8)
     if (Test-Path -LiteralPath $userGch) { $userGchTime = (Get-Item -LiteralPath $userGch).LastWriteTimeUtc }
 
     # -Wait drops -NoWait (closing prompts read stdin); -Commit drops -NoCommit.
@@ -104,7 +113,7 @@
         Assert-Equal $tr.src_hash (Get-LcSrcHash $twoSum)
         $sv = @($ev | Where-Object { $_.slug -eq 'two-sum' -and $_.event -eq 'solved' })[0]
         Assert-True ($sv.attempts -eq 1 -and $null -ne $sv.max_ms) "e2e: two-sum solved $($sv | ConvertTo-Json -Compress)"
-        Assert-Match ([IO.File]::ReadAllText((Join-Path $journey 'journey.md'))) '\| 1 \| \[Two Sum\]\(https://leetcode\.com/problems/two-sum/\) \| Easy \|'
+        Assert-Match ([IO.File]::ReadAllText((Join-Path $journey 'journey.md'))) '\| 1 \| \[Two Sum\]\(https://leetcode\.com/problems/two-sum/\) \| passed locally \| Easy \|'
         Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '1' 'e2e: a -NoCommit run committed'
 
         # e2e: rerun skips compile
@@ -346,7 +355,7 @@
         Assert-Equal $mine[2].text 'two pointers next'
         # runs since the edited version's solve: the lc.h-touch rerun, the compile error, this one
         Assert-Equal $mine[1].attempts 3 'e2e: attempts since the last solve'
-        Assert-Match ([IO.File]::ReadAllText((Join-Path $journey 'journey.md'))) '(?m)^\| [0-9-]+ \| 1 \| \[Two Sum\]\(https://leetcode\.com/problems/two-sum/\) \| Easy \| Array, Hash Table \|  \| [0-9.]+ ms \| 1 \| two pointers next \|$'
+        Assert-Match ([IO.File]::ReadAllText((Join-Path $journey 'journey.md'))) '(?m)^\| [0-9-]+ \| 1 \| \[Two Sum\]\(https://leetcode\.com/problems/two-sum/\) \| passed locally \| Easy \| Array, Hash Table \|  \| [0-9.]+ ms \| 1 \| two pointers next \|$'
         Assert-Equal ((& $git -C $tmp log -1 --format=%s) -join '') 'solve: two-sum (Easy)'
         Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '2'
         $files = @(& $git -C $tmp show --name-only --format= HEAD)
@@ -427,7 +436,7 @@
         Assert-True (@($a.points).Count -ge 3 -and $null -ne @($a.points)[0].n -and $null -ne @($a.points)[0].ms -and @($a.points)[0].per_call_us -gt 0) "e2e: analyze_run points $($a | ConvertTo-Json -Compress)"
         Assert-True ($a.alloc.count -gt 0 -and $a.alloc.bytes -gt 0 -and $null -ne $a.alloc.peak) "e2e: analyze_run alloc $($a | ConvertTo-Json -Compress)"
         # journey.md's Complexity comes from the latest analyze_run (the hash-map two-sum ran after the variant)
-        Assert-Match ([IO.File]::ReadAllText((Join-Path $journey 'journey.md'))) '\[Two Sum\]\(https://leetcode\.com/problems/two-sum/\) \| Easy \| Array, Hash Table \| O\(n( log n)?\) \|'
+        Assert-Match ([IO.File]::ReadAllText((Join-Path $journey 'journey.md'))) '\[Two Sum\]\(https://leetcode\.com/problems/two-sum/\) \| passed locally \| Easy \| Array, Hash Table \| O\(n( log n)?\) \|'
         Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '2' 'e2e: analyze committed'
 
         # e2e: a fast O(n) solution (about 0.1 ms at n = 10^5) is timed in batches, so its few-microsecond
@@ -510,6 +519,30 @@
         $stray = @(Get-ChildItem -LiteralPath $tmp -Recurse -Force -Directory | Where-Object { $_.Name -eq 'tests' -or $_.Name -eq '.meta' })
         Assert-Equal $stray.Count 0 "e2e: runs made tests folders: $($stray.FullName -join ', ')"
 
+        # e2e: LeetCode accepts. -Offline skips them; an online run writes one accepted event (two-sum has
+        # events; never-tried has none) and prints one line; the next run finds nothing new and prints nothing.
+        $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        [IO.File]::WriteAllText($env:LC_ACCEPTED_RESPONSE, ('{"data":{"recentAcSubmissionList":[{"titleSlug":"two-sum","timestamp":"' + $now +
+            '"},{"titleSlug":"never-tried","timestamp":"' + $now + '"}]}}'), $utf8)
+        $countAc = { @(Read-LcEvents $journey | Where-Object { $_.event -eq 'accepted' }).Count }
+        $r = Invoke-Lc $twoSum
+        Assert-Equal $r.Code 0 "e2e: offline accepts run`n$($r.Out)"
+        Assert-True ($r.Out -notmatch 'LeetCode accepted') "e2e: -Offline printed accepts`n$($r.Out)"
+        Assert-Equal (& $countAc) 0 'e2e: -Offline wrote an accepted event'
+        $r = Invoke-Lc $twoSum -Online
+        Assert-Equal $r.Code 0 "e2e: accepts run`n$($r.Out)"
+        Assert-Equal @($r.Out -split '\r?\n' | Where-Object { $_ -match 'LeetCode accepted' }).Count 1 "e2e: accepts line count`n$($r.Out)"
+        Assert-Match $r.Out '(?m)^LeetCode accepted: two-sum\s*$'
+        $acc = @(Read-LcEvents $journey | Where-Object { $_.event -eq 'accepted' })
+        Assert-Equal $acc.Count 1 'e2e: one accepted event'
+        Assert-Equal "$($acc[0].slug)|$([DateTimeOffset]::Parse($acc[0].submitted_at, [Globalization.CultureInfo]::InvariantCulture).ToUnixTimeSeconds())" "two-sum|$now"
+        Assert-Equal $acc[0].src_hash (Get-LcSrcHash $twoSum)
+        Assert-Match ([IO.File]::ReadAllText((Join-Path $journey 'journey.md'))) '\[Two Sum\]\(https://leetcode\.com/problems/two-sum/\) \| accepted \| Easy \|'
+        $r = Invoke-Lc $twoSum -Online
+        Assert-Equal $r.Code 0 "e2e: second accepts run`n$($r.Out)"
+        Assert-True ($r.Out -notmatch 'LeetCode accepted') "e2e: second run printed accepts`n$($r.Out)"
+        Assert-Equal (& $countAc) 1 'e2e: second run duplicated the accepted event'
+
         # e2e: the real dsa/journey was never written
         if ($null -eq $realEventsTime) { Assert-True (-not (Test-Path -LiteralPath $realEvents)) 'e2e: wrote the real journey' }
         else { Assert-Equal (Get-Item -LiteralPath $realEvents).LastWriteTimeUtc $realEventsTime 'e2e: wrote the real journey' }
@@ -520,6 +553,8 @@
         }
     } finally {
         $env:LC_BUILD_ROOT = $oldBuildRoot
+        $env:LC_USER_FILE = $oldUserFile; $env:LC_ACCEPTED_RESPONSE = $oldAcResp
+        Remove-Item -Recurse -Force -LiteralPath $acDir -ErrorAction SilentlyContinue
         Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
     }
 }

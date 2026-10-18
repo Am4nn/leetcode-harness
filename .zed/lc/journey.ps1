@@ -92,6 +92,39 @@ function Test-LcSolvedBefore($Events, [string]$Slug, [string]$SrcHash) {
     return $false
 }
 
+# Writes an accepted event for each of LeetCode's accepts ($List: @{ Slug; Time } with Time in unix
+# seconds) when the slug already has events, the accept is at or after its first event, and no accepted
+# event has the same submitted_at. file and src_hash come from the slug's latest event.
+# Returns the new events (shaped like Read-LcEvents').
+function Add-LcAcceptedEvents([string]$Root, $List) {
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    $bySlug = [ordered]@{}
+    foreach ($a in @($List | Sort-Object { [long]$_.Time })) {
+        if (-not $a -or -not $a.Slug) { continue }
+        if (-not $bySlug.Contains($a.Slug)) { $bySlug[$a.Slug] = New-Object Collections.ArrayList }
+        [void]$bySlug[$a.Slug].Add([long]$a.Time)
+    }
+    $new = New-Object Collections.ArrayList
+    foreach ($slug in @($bySlug.Keys)) {
+        $mine = @(Read-LcEvents $Root -Slug $slug)
+        if (-not $mine.Count) { continue }
+        try { $first = [DateTimeOffset]::Parse([string]$mine[0].ts, $inv).ToUnixTimeSeconds() } catch { continue }
+        $have = New-Object Collections.Generic.HashSet[long]
+        foreach ($e in $mine) {
+            if ($e.event -ne 'accepted' -or -not $e.submitted_at) { continue }
+            try { [void]$have.Add([DateTimeOffset]::Parse([string]$e.submitted_at, $inv).ToUnixTimeSeconds()) } catch { }
+        }
+        $last = $mine[-1]
+        foreach ($t in $bySlug[$slug]) {
+            if ($t -lt $first -or -not $have.Add($t)) { continue }
+            $at = [DateTimeOffset]::FromUnixTimeSeconds($t).ToLocalTime().ToString('yyyy-MM-ddTHH:mm:sszzz', $inv)
+            [void]$new.Add((Write-LcEvent -Root $Root -Event accepted -Slug $slug -File ([string]$last.file) -SrcHash ([string]$last.src_hash) `
+                -Data ([ordered]@{ submitted_at = $at }) -PassThru))
+        }
+    }
+    return @($new.ToArray())
+}
+
 function Save-LcSnapshot([string]$Root, [string]$Slug, [string]$SrcPath, [string]$SrcHash, [string]$Ts = '') {
     if (-not $Ts) { $Ts = Get-LcNow }
     $dir = Join-Path (Join-Path $Root 'snapshots') $Slug
@@ -112,10 +145,11 @@ function Get-LcJourneyState($Events) {
     foreach ($e in @($Events)) {
         $slug = [string]$e.slug
         $r = $by[$slug]
-        if ($null -eq $r) { $r = @{ Runs = 0; Since = 0; Solved = $null; Cx = ''; Note = ''; Fetch = $null }; $by[$slug] = $r }
+        if ($null -eq $r) { $r = @{ Runs = 0; Since = 0; Solved = $null; Accepted = $false; Cx = ''; Note = ''; Fetch = $null }; $by[$slug] = $r }
         switch ([string]$e.event) {
             'test_run'    { $r.Runs++; $r.Since++ }
             'solved'      { $r.Since = 0; if ($null -eq $r.Solved) { $r.Solved = $e } }
+            'accepted'    { $r.Accepted = $true }
             'analyze_run' { if ($e.complexity) { $r.Cx = [string]$e.complexity } }  # a failed analyze has none
             'note'        { $r.Note = [string]$e.text }
             'fetch'       { if ($e.ok -eq $true) { $r.Fetch = $e } }
@@ -156,8 +190,11 @@ function Format-LcJourneyRow([string]$Slug, $State, [string]$MetaDir) {
         if ($q.tags) { $tags = (@($q.tags) -join ', ') }
     }
     $esc = { param($s) ([string]$s) -replace '\|', '\|' -replace "[\r\n]+", ' ' }
-    return '| {0} | {1} | [{2}](https://leetcode.com/problems/{3}/) | {4} | {5} | {6} | {7} | {8} | {9} |' -f `
-        $date, $id, (& $esc $title), $Slug, $diff, (& $esc $tags), (& $esc $r.Cx), $maxTime, $attempts, (& $esc $r.Note)
+    # Status: LeetCode accepted it, else every local case passed once, else only tried.
+    $status = 'attempted'
+    if ($r.Accepted) { $status = 'accepted' } elseif ($r.Solved) { $status = 'passed locally' }
+    return '| {0} | {1} | [{2}](https://leetcode.com/problems/{3}/) | {4} | {5} | {6} | {7} | {8} | {9} | {10} |' -f `
+        $date, $id, (& $esc $title), $Slug, $status, $diff, (& $esc $tags), (& $esc $r.Cx), $maxTime, $attempts, (& $esc $r.Note)
 }
 
 # Regenerates journey.md from the events (-Events: the list when the caller already has it).
@@ -165,8 +202,8 @@ function Format-LcJourneyRow([string]$Slug, $State, [string]$MetaDir) {
 # -Events then needs only that slug's events. With no usable journey.md yet, it regenerates everything.
 function Update-LcJourneyFile([string]$Root, [string]$MetaDir = '', $Events = $null, [string]$Slug = '') {
     if (-not $MetaDir) { $MetaDir = Join-Path $Root 'problems' }
-    $header = @('| Date | # | Problem | Difficulty | Tags | Complexity | Max time | Attempts | Note |',
-                '|---|---|---|---|---|---|---|---|---|')
+    $header = @('| Date | # | Problem | Status | Difficulty | Tags | Complexity | Max time | Attempts | Note |',
+                '|---|---|---|---|---|---|---|---|---|---|')
     $md = Join-Path $Root 'journey.md'
     $lines = New-Object Collections.Generic.List[string]
     $old = $null

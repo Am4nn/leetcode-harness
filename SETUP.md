@@ -138,7 +138,23 @@ Optional full self-test, which takes a few minutes: `powershell -NoProfile -Exec
 
 Delete `$env:TEMP\lc-setup-check` afterwards.
 
-## 8. Hand over
+## 8. Optional: LeetCode username
+
+With a username, the harness can tell which problems LeetCode accepted. It reads the public profile, so no login is needed.
+
+**Ask** the user for their LeetCode username, the last part of `leetcode.com/u/<username>`. If they'd rather not, skip this step.
+
+Write it to `.zed\leetcode-user.txt` in the workspace:
+
+```powershell
+Set-Content -Encoding ascii .zed\leetcode-user.txt '<username>'
+```
+
+The file is git-ignored, so the username stays on this machine. Without it, everything else works the same.
+
+Check: `git check-ignore .zed/leetcode-user.txt` prints the path.
+
+## 9. Hand over
 
 Tell the user:
 1. Open the folder in Zed (`zed "<folder>"`).

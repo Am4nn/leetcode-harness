@@ -2,6 +2,7 @@
 & {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     . (Join-Path $repo '.zed\lc\journey.ps1')
+    . (Join-Path $repo '.zed\lc\fetch.ps1')
 
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('lcj-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force $tmp | Out-Null
@@ -85,9 +86,9 @@
         Write-LcEvent -Root $jr -Event test_run -Slug 'two-sum' -File 'two-sum.cpp' -SrcHash $h -Ts '2026-10-18T10:00:00+05:30' -Data @{ compile_ok = $true }
         Update-LcJourneyFile -Root $jr -MetaDir (Join-Path $tmp 'nometa')
         $md = [IO.File]::ReadAllLines((Join-Path $jr 'journey.md'))
-        Assert-Equal $md[0] '| Date | # | Problem | Difficulty | Tags | Complexity | Max time | Attempts | Note |'
-        Assert-Equal $md[2] '| 2026-10-17 | 189 | [Rotate Array](https://leetcode.com/problems/rotate-array/) | Medium | Array, Math, Two Pointers | O(n) | 0.02 ms | 3 | reverse trick |'
-        Assert-Equal $md[3] '| - |  | [two-sum](https://leetcode.com/problems/two-sum/) |  |  |  |  | 1 |  |'
+        Assert-Equal $md[0] '| Date | # | Problem | Status | Difficulty | Tags | Complexity | Max time | Attempts | Note |'
+        Assert-Equal $md[2] '| 2026-10-17 | 189 | [Rotate Array](https://leetcode.com/problems/rotate-array/) | passed locally | Medium | Array, Math, Two Pointers | O(n) | 0.02 ms | 3 | reverse trick |'
+        Assert-Equal $md[3] '| - |  | [two-sum](https://leetcode.com/problems/two-sum/) | attempted |  |  |  |  | 1 |  |'
         Assert-Equal $md.Count 4
         # Passing the events in gives the same file.
         $mdText = [IO.File]::ReadAllText((Join-Path $jr 'journey.md'))
@@ -109,8 +110,8 @@
         $inc = [IO.File]::ReadAllLines((Join-Path $jr 'journey.md'))
         Assert-Equal $inc.Count 5
         Assert-Equal $inc[2] $md[2]
-        Assert-Equal $inc[3] '| - |  | [two-sum](https://leetcode.com/problems/two-sum/) |  |  |  |  | 1 | a \| b |'
-        Assert-Equal $inc[4] '| - |  | [climbing-stairs](https://leetcode.com/problems/climbing-stairs/) |  |  |  |  | 1 |  |'
+        Assert-Equal $inc[3] '| - |  | [two-sum](https://leetcode.com/problems/two-sum/) | attempted |  |  |  |  | 1 | a \| b |'
+        Assert-Equal $inc[4] '| - |  | [climbing-stairs](https://leetcode.com/problems/climbing-stairs/) | attempted |  |  |  |  | 1 |  |'
         Update-LcJourneyFile -Root $jr -MetaDir $nm
         Assert-Equal (([IO.File]::ReadAllLines((Join-Path $jr 'journey.md'))) -join "`n") ($inc -join "`n")
         # Without a journey.md, -Slug regenerates every row.
@@ -122,7 +123,7 @@
         $mdir = Join-Path $tmp 'meta'; New-Item -ItemType Directory $mdir | Out-Null
         [IO.File]::WriteAllText((Join-Path $mdir 'two-sum.json'), '{"questionFrontendId":"1","title":"Two Sum","difficulty":"Easy","topicTags":[{"name":"Array"},{"name":"Hash Table"}]}')
         Update-LcJourneyFile -Root $jr -MetaDir $mdir
-        $cachedRow = '| - | 1 | [Two Sum](https://leetcode.com/problems/two-sum/) | Easy | Array, Hash Table |  |  | 1 | a \| b |'
+        $cachedRow = '| - | 1 | [Two Sum](https://leetcode.com/problems/two-sum/) | attempted | Easy | Array, Hash Table |  |  | 1 | a \| b |'
         Assert-Equal ([IO.File]::ReadAllLines((Join-Path $jr 'journey.md')))[3] $cachedRow
         # Without -MetaDir the cache is <Root>/problems.
         Update-LcJourneyFile -Root $jr
@@ -131,6 +132,55 @@
         Copy-Item (Join-Path $mdir 'two-sum.json') (Join-Path $jr 'problems')
         Update-LcJourneyFile -Root $jr
         Assert-Equal ([IO.File]::ReadAllLines((Join-Path $jr 'journey.md')))[3] $cachedRow 'journey: default MetaDir is <Root>/problems'
+
+        # LeetCode accepts: which ones become accepted events
+        $inv = [Globalization.CultureInfo]::InvariantCulture
+        $ar = Join-Path $tmp 'acroot'
+        $mz = 'move-zeroes'
+        $t0 = [DateTimeOffset]::Parse('2026-10-17T10:00:00+05:30', $inv).ToUnixTimeSeconds()
+        Write-LcEvent -Root $ar -Event test_run -Slug $mz -File 'old.cpp' -SrcHash 'aaaaaaaaaaaa' -Ts '2026-10-17T10:00:00+05:30' -Data @{ compile_ok = $true }
+        Write-LcEvent -Root $ar -Event solved -Slug $mz -File "leetcode-solves/$mz.cpp" -SrcHash 'bbbbbbbbbbbb' -Ts '2026-10-17T10:01:00+05:30' -Data @{ attempts = 1; max_ms = 0.01 }
+        $list = @(@{ Slug = $mz; Time = $t0 + 120 }, @{ Slug = $mz; Time = $t0 - 1 }, @{ Slug = 'unknown-slug'; Time = $t0 + 60 }, @{ Slug = $mz; Time = $t0 })
+        $new = @(Add-LcAcceptedEvents -Root $ar -List $list)
+        Assert-Equal $new.Count 2 'accepts: one before the first event and one of an unknown slug are skipped'
+        $acc = @(Read-LcEvents $ar | Where-Object { $_.event -eq 'accepted' })
+        Assert-Equal $acc.Count 2
+        Assert-Equal (@($acc | ForEach-Object { [DateTimeOffset]::Parse($_.submitted_at, $inv).ToUnixTimeSeconds() }) -join ',') "$t0,$($t0 + 120)"
+        foreach ($a in $acc) {
+            Assert-Equal "$($a.slug)|$($a.file)|$($a.src_hash)" "$mz|leetcode-solves/$mz.cpp|bbbbbbbbbbbb" 'accepted: file and src_hash from the latest event'
+            Assert-Match $a.submitted_at '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$'
+            Assert-Match $a.ts '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$'
+        }
+        Assert-Equal @(Read-LcEvents $ar -Slug 'unknown-slug').Count 0
+        Assert-Equal @(Add-LcAcceptedEvents -Root $ar -List $list).Count 0 'accepts: duplicates are skipped'
+        Assert-Equal @(Read-LcEvents $ar).Count 4
+        Assert-Equal @(Add-LcAcceptedEvents -Root $ar -List @()).Count 0
+
+        # journey.md Status: accepted, else passed locally (solved), else attempted
+        Write-LcEvent -Root $ar -Event test_run -Slug 'tried-only' -File 'tried-only.cpp' -SrcHash 'cccccccccccc' -Data @{ compile_ok = $true }
+        Write-LcEvent -Root $ar -Event test_run -Slug 'local-only' -File 'local-only.cpp' -SrcHash 'dddddddddddd' -Data @{ compile_ok = $true }
+        Write-LcEvent -Root $ar -Event solved -Slug 'local-only' -File 'local-only.cpp' -SrcHash 'dddddddddddd' -Data @{ attempts = 1; max_ms = 0.01 }
+        Update-LcJourneyFile -Root $ar -MetaDir $nm
+        $st = @([IO.File]::ReadAllLines((Join-Path $ar 'journey.md')) | Select-Object -Skip 2 | ForEach-Object { if ($_ -match '/\) \| ([a-z ]+) \| ') { $Matches[1] } })
+        Assert-Equal ($st -join ',') 'accepted,attempted,passed locally'
+
+        # Start-LcAcceptedFetch: no username, no request; a response file stands in for the network
+        $resp = Join-Path $tmp 'resp.json'
+        [IO.File]::WriteAllText($resp, '{"data":{"recentAcSubmissionList":[{"titleSlug":"move-zeroes","timestamp":"1792324222"},{"titleSlug":"x","timestamp":"bad"}]}}')
+        $uf = Join-Path $tmp 'user.txt'
+        Assert-True ($null -eq (Start-LcAcceptedFetch -UserFile $uf -ResponsePath $resp)) 'accepts: missing username file, no request'
+        [IO.File]::WriteAllText($uf, "  `r`n")
+        Assert-True ($null -eq (Start-LcAcceptedFetch -UserFile $uf -ResponsePath $resp)) 'accepts: empty username file, no request'
+        Assert-True ($null -eq (Start-LcAcceptedFetch -UserFile '' -ResponsePath $resp)) 'accepts: no username file, no request'
+        [IO.File]::WriteAllText($uf, " someone`r`n")
+        $task = Start-LcAcceptedFetch -UserFile $uf -ResponsePath $resp
+        Assert-True ($null -ne $task) 'accepts: username and response file give a request'
+        $got = @(Receive-LcAcceptedList $task)
+        Assert-Equal (@($got | ForEach-Object { "$($_.Slug)@$($_.Time)" }) -join ',') 'move-zeroes@1792324222'
+        Assert-True ($null -eq (Start-LcAcceptedFetch -UserFile $uf -ResponsePath (Join-Path $tmp 'none.json'))) 'accepts: missing response file'
+        [IO.File]::WriteAllText($resp, 'not json')
+        Assert-Equal @(Receive-LcAcceptedList (Start-LcAcceptedFetch -UserFile $uf -ResponsePath $resp)).Count 0 'accepts: bad JSON is ignored'
+        Assert-Equal @(Receive-LcAcceptedList $null).Count 0
 
         # solve commit (temp repo only)
         $git = (Get-Command git -ErrorAction Stop).Source

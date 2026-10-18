@@ -7,3 +7,6 @@ build/
 
 # Local build notes from Claude Code sessions
 .superpowers/
+
+# My LeetCode username (private; read by .zed/lc.ps1)
+.zed/leetcode-user.txt
