@@ -58,7 +58,7 @@ Then delete the author's progress:
 - `journey\`: the event log, snapshots, `journey.md` and the cached problem data in `journey\problems\`. The harness recreates it on the first run.
 - `docs\`: the author's design notes and build plan.
 
-Keep `lc\`, `.zed\`, `.clangd`, `.gitignore`, `README.md`, `SETUP.md`, `CHEATSHEET.png` and `LICENSE`.
+Keep `lc\`, `.zed\`, `.clangd`, `.gitignore`, `README.md`, `SETUP.md`, `CHEATSHEET.png`, `CLAUDE.md` (how Claude Code coaches in this folder; the user can edit it) and `LICENSE`.
 
 Start a fresh history, because the harness commits each solved problem automatically:
 
