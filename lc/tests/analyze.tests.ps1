@@ -71,6 +71,35 @@
         @{ n = 6250; ms = 0.4499 }, @{ n = 12500; ms = 0.939 }, @{ n = 25000; ms = 1.8763 }, @{ n = 50000; ms = 3.9613 },
         @{ n = 100000; ms = 8.1233 }, @{ n = 200000; ms = 16.4639 })
     Assert-Equal (Get-LcComplexity $lru).Label 'O(n)'
+    # A fixed cost per call (bench's doubling sizes): it flattens the small sizes but must not lower the label.
+    $sizes = { param([long]$max) $v = @(); for ($n = $max; $v.Count -lt 10 -and $n -ge 8; $n = [long][math]::Floor($n / 2)) { $v = @($n) + $v }; $v }
+    Assert-Equal (Get-LcComplexity (& $pts (& $sizes 1000) { param($n) 5e-5 + 1e-6 * $n })).Label 'O(n)' 'O(n) + 50 ns per call'
+    # 30x growth with 100 ns per call: O(log n) misses half the O(1) error by a little and O(1), the worst
+    # fit of the three, must not win for it.
+    Assert-Equal (Get-LcComplexity (& $pts (& $sizes 10000) { param($n) 1e-4 + 3e-7 * $n })).Label 'O(n)' 'O(n) + 100 ns per call'
+    $fit = Get-LcComplexity (& $pts @(& $sizes 100000 | Where-Object { $_ -le 25000 }) { param($n) 1 + 1e-6 * $n * $n })
+    Assert-Equal $fit.Label 'O(n^2)' 'O(n^2) + a 1 ms table per call, capped at 25000'
+    Assert-True ([math]::Abs((Get-LcEstimateMs -Fit $fit -N 100000) - 10016) -le 1) 'analyze: O(n^2) estimate past the cap'
+    Assert-Equal (Get-LcComplexity (& $pts (& $sizes 10000) { param($n) 0.1 + 5e-7 * $n * $n })).Label 'O(n^2)' 'design: a 100 us constructor, O(n) per call'
+    # A Fibonacci-like recursion (1.6^n) with 50 ns per call, scalar sizes up to 45.
+    Assert-Equal (Get-LcComplexity (& $pts 4, 8, 13, 17, 22, 26, 31 { param($n) 5e-5 + 2e-6 * [math]::Pow(1.618, $n) })).Label 'O(2^n)'
+    # first-missing-positive (cyclic sort, O(n)), the user's recorded run: 2.1x per doubling, a 4.5x step
+    # between 6250 and 12500 (L1), then 2.0x at the top.
+    $fmp = @(@{ n = 195; ms = 0.000157 }, @{ n = 390; ms = 0.000335 }, @{ n = 781; ms = 0.00069 }, @{ n = 1562; ms = 0.0015 },
+        @{ n = 3125; ms = 0.00318 }, @{ n = 6250; ms = 0.007491 }, @{ n = 12500; ms = 0.033455 }, @{ n = 25000; ms = 0.086258 },
+        @{ n = 50000; ms = 0.176617 }, @{ n = 100000; ms = 0.353133 })
+    Assert-Equal (Get-LcComplexity $fmp).Label 'O(n)' 'first-missing-positive: O(n) with a cache step'
+    # majority-element by std::sort (O(n log n)) on the same machine: a 5.8x step at 3125, then 2.13x at the top.
+    $sort = @(@{ n = 195; ms = 0.001065 }, @{ n = 390; ms = 0.002567 }, @{ n = 781; ms = 0.00601 }, @{ n = 1562; ms = 0.014055 },
+        @{ n = 3125; ms = 0.0811 }, @{ n = 6250; ms = 0.20218 }, @{ n = 12500; ms = 0.48015 }, @{ n = 25000; ms = 1.0255 },
+        @{ n = 50000; ms = 2.2004 }, @{ n = 100000; ms = 4.678 })
+    Assert-Equal (Get-LcComplexity $sort).Label 'O(n log n)' 'std::sort: O(n log n) with a cache step'
+    # A small maxN gives bench 1 or 2 sizes: slow calls there are too few sizes, not too fast.
+    $fit = Get-LcComplexity @(@{ n = 10; ms = 40 })
+    Assert-True ($fit.TooFast -and $fit.TooFew -and $fit.Label -eq 'too few sizes to tell') 'one slow size'
+    $fit = Get-LcComplexity @(@{ n = 8; ms = 0.2 }, @{ n = 16; ms = 40 })
+    Assert-True ($fit.TooFast -and $fit.TooFew) 'two slow sizes'
+    Assert-True (-not (Get-LcComplexity (& $pts 1000, 2000, 4000, 8000 { param($n) 1e-9 * $n })).TooFew) 'too fast is not too few'
 
     $fit = Get-LcComplexity (& $pts 1000, 2000, 4000, 8000 { param($n) 1e-6 * $n * $n })
     $est = Get-LcEstimateMs -Fit $fit -N 100000
