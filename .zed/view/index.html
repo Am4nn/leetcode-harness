@@ -39,7 +39,11 @@
   --add: #13291b; --del: #33151c;
   --heat-0: #232328; --heat-1: #0e4429; --heat-2: #006d32; --heat-3: #26a641; --heat-4: #39d353;
 }
-* { box-sizing: border-box; }
+* { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line-2); border: 2px solid transparent; border-radius: 6px; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: var(--faint); }
 html, body { margin: 0; overflow-x: clip; }
 body { background: var(--bg); color: var(--text); font: 14px/1.5 Geist, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
 .mono { font-family: "Geist Mono", ui-monospace, monospace; font-variant-ligatures: none; }
@@ -123,6 +127,8 @@ nav button[aria-selected="true"] { color: var(--text); border-bottom-color: var(
 .step.fail .b { color: var(--bad); border-color: var(--bad); }
 .step.pass[aria-selected="true"] .b { background: var(--ok); color: var(--surface); }
 .step.fail[aria-selected="true"] .b { background: var(--bad); color: var(--surface); }
+.step.untested .b { color: var(--faint); }
+.step.untested[aria-selected="true"] .b { background: var(--faint); border-color: var(--faint); color: var(--surface); }
 .step small { font-size: 11.5px; color: var(--faint); }
 .step[aria-selected="true"] small { color: var(--text); font-weight: 600; }
 .link { flex: 1; min-width: 14px; height: 1.5px; background: var(--line-2); margin-bottom: 20px; }
@@ -204,6 +210,7 @@ nav button[aria-selected="true"] { color: var(--text); border-bottom-color: var(
 .wkread summary::-webkit-details-marker { display: none; }
 .wkread[open] summary { color: var(--text); }
 .wkread p { margin: 6px 0 0; font-size: 13.5px; }
+.wkread p, .note, .rnote { white-space: pre-wrap; }
 .none { color: var(--faint); font-size: 13px; padding: 14px 0; }
 .panel > .none { padding: 18px; }
 .day li[data-slug] { cursor: pointer; }
@@ -317,7 +324,8 @@ nav button[aria-selected="true"] { color: var(--text); border-bottom-color: var(
 // whenever the tab comes back into focus. Read-only.
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const dcol = d => `var(--${(d || 'muted').toLowerCase()})`;
+const DCOL = { Easy: 'var(--easy)', Medium: 'var(--medium)', Hard: 'var(--hard)' };
+const dcol = d => DCOL[d] || 'var(--muted)';
 const day0 = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return +d; };
 const fmtDay = t => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 const fmtTime = t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -339,8 +347,11 @@ const solved = s => s === 'accepted' || s === 'hints';
 const st = s => `<span class="st" title="${LABEL[s]}">${ICON[s]}</span>`;
 const heat = n => n === 0 ? 'var(--heat-0)' : n < 5 ? 'var(--heat-1)' : n < 15 ? 'var(--heat-2)' : n < 30 ? 'var(--heat-3)' : 'var(--heat-4)';
 
-let DATA = null, problems = [], cur = null, lastText = '';
+let DATA = null, problems = [], cur = null, curK = -1, lastText = '', etag = '';
 const title = s => (DATA.meta[s] || {}).title || s;
+// when LeetCode accepted it (submitted_at), else when a run found the accept (ts)
+const accTime = e => e.submitted_at || e.ts;
+const tms = t => { const n = new Date(t).getTime(); return isNaN(n) ? Infinity : n; };
 
 // ---- problems from events ----
 function buildProblems() {
@@ -351,48 +362,68 @@ function buildProblems() {
     const runs = evs.filter(e => e.event === 'test_run');
     if (!runs.length) continue;
     const meta = DATA.meta[slug] || {};
-    const acc = evs.find(e => e.event === 'accepted');
+    // the earliest accept: accepts can be found out of order
+    const acc = evs.filter(e => e.event === 'accepted').reduce((a, e) => !a || tms(accTime(e)) < tms(accTime(a)) ? e : a, null);
     const iSolved = evs.findIndex(e => e.event === 'solved');
     const first = evs[0].ts;
     const versions = [];
     for (const e of evs) {
       if (e.event !== 'test_run' && e.event !== 'analyze_run') continue;
       let v = versions.find(v => v.hash === e.src_hash);
-      if (!v) { v = { hash: e.src_hash, ts: e.ts, runs: [] }; versions.push(v); }
+      if (!v) { v = { hash: e.src_hash, ts: e.ts, runs: [], code: null }; versions.push(v); }
       v.runs.push(e);
     }
-    const snaps = [].concat(DATA.snaps[slug] || []);
     for (const v of versions) {
-      // a snapshot named by this version's hash, else the one saved within 5 s of its first run
-      const t = new Date(v.ts).getTime();
-      let best = snaps.find(s => s.hash && s.hash === v.hash);
-      if (!best) for (const s of snaps) { const d = Math.abs(s.t - t); if (d < 5000 && (!best || d < Math.abs(best.t - t))) best = s; }
-      v.code = best ? best.code.replace(/\r/g, '').replace(/\n$/, '') : null;
-      v.ok = v.runs.some(r => r.event === 'test_run') && !v.runs.some(r => (r.event === 'test_run' && (r.failed > 0 || r.crash || r.compile_ok === false)) || (r.event === 'analyze_run' && r.status === 'crash'));
+      // pass, fail, or untested (only analyzed with Alt+F8, and it didn't crash)
+      const failed = v.runs.some(r => (r.event === 'test_run' && (r.failed > 0 || r.crash || r.compile_ok === false)) || (r.event === 'analyze_run' && r.status === 'crash'));
+      v.state = failed ? 'fail' : v.runs.some(r => r.event === 'test_run') ? 'pass' : 'untested';
     }
-    const cxRuns = evs.filter(e => e.event === 'analyze_run' && e.complexity && e.complexity.startsWith('O('));
+    const cxRuns = evs.filter(e => e.event === 'analyze_run' && typeof e.complexity === 'string' && e.complexity.startsWith('O('));
     const solvedEv = iSolved >= 0 ? evs[iSolved] : null;
     const reviews = evs.filter(e => e.event === 'review');
     out.push({
       slug, meta, evs, versions, runs: runs.length,
       status: SMAP[DATA.status[slug]] || (acc ? 'accepted' : iSolved >= 0 ? 'local' : 'attempted'),
       runsToPass: iSolved < 0 ? null : evs.slice(0, iSolved + 1).filter(e => e.event === 'test_run').length,
-      tta: acc ? new Date(acc.submitted_at || acc.ts) - new Date(first) : null,
+      tta: acc ? new Date(accTime(acc)) - new Date(first) : null,
       maxMs: solvedEv ? solvedEv.max_ms : null,
       cxFirst: cxRuns.length ? cxRuns[0].complexity : null, cxLast: cxRuns.length ? cxRuns[cxRuns.length - 1].complexity : null,
       note: (evs.filter(e => e.event === 'note').pop() || {}).text,
       review: reviews.length ? reviews[reviews.length - 1] : null,
-      code: DATA.source[slug] != null ? DATA.source[slug].replace(/\r/g, '').replace(/\n$/, '') : (versions.length ? versions[versions.length - 1].code : null),
+      hasCode: (DATA.code || []).includes(slug),
       last: evs[evs.length - 1].ts, first,
     });
   }
-  return out.sort((a, b) => b.last.localeCompare(a.last));
+  return out.sort((a, b) => String(b.last || '').localeCompare(String(a.last || '')));
+}
+
+// ---- code, fetched per problem (/snap/<slug>) when it's shown ----
+const snapCache = new Map();
+function fetchSnap(slug) {
+  if (!snapCache.has(slug)) snapCache.set(slug, fetch('snap/' + encodeURIComponent(slug), { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : null).catch(() => null).then(d => { if (!d) snapCache.delete(slug); return d || { snaps: [], source: null }; }));
+  return snapCache.get(slug);
+}
+const clean = c => c.replace(/\r/g, '').replace(/\n$/, '');
+// each version's code: the snapshot named by its hash, else the one saved within 5 s of its first run
+function attachCode(p, d) {
+  const snaps = [].concat(d.snaps || []);
+  for (const v of p.versions) {
+    const t = new Date(v.ts).getTime();
+    let best = snaps.find(s => s.hash && s.hash === v.hash);
+    if (!best) for (const s of snaps) { const x = Math.abs(s.t - t); if (x < 5000 && (!best || x < Math.abs(best.t - t))) best = s; }
+    v.code = best && typeof best.code === 'string' ? clean(best.code) : null;
+  }
+  p.code = typeof d.source === 'string' ? clean(d.source) : (p.versions.length ? p.versions[p.versions.length - 1].code : null);
+  p.loaded = true;
 }
 
 // ---- problems page ----
 function renderProblems(runDays, lastDay) {
   const acc = problems.filter(p => solved(p.status));
   const parts = ['Easy', 'Medium', 'Hard'].map(d => [d, acc.filter(p => p.meta.difficulty === d).length]);
+  const unknown = acc.filter(p => !DCOL[p.meta.difficulty]).length;  // no problems/<slug>.json yet
+  if (unknown) parts.push(['Unknown', unknown]);
   const total = acc.length, r = 42, C = 2 * Math.PI * r, gap = parts.filter(([, n]) => n).length > 1 ? 3 : 0;
   let off = 0, arcs = '';
   for (const [d, n] of parts) {
@@ -421,7 +452,7 @@ function renderProblems(runDays, lastDay) {
     problems.map(p => {
       const tags = p.meta.tags || [];
       const k = tags.length > 1 && (tags[0] + tags[1]).length <= 22 ? 2 : 1;
-      return `<div class="row" data-slug="${p.slug}">${st(p.status)}<span class="id mono">${esc(p.meta.id)}</span><span class="title">${esc(p.meta.title || p.slug)}</span>
+      return `<div class="row" data-slug="${esc(p.slug)}">${st(p.status)}<span class="id mono">${esc(p.meta.id)}</span><span class="title">${esc(p.meta.title || p.slug)}</span>
         <span class="diff" style="color:${dcol(p.meta.difficulty)}">${esc(p.meta.difficulty)}</span>
         <span class="chips">${tags.slice(0, k).map(t => `<span class="chip">${esc(t)}</span>`).join('')}${tags.length > k ? `<span class="chip">+${tags.length - k}</span>` : ''}</span>
         <span class="num runs-n mono">${p.runs}</span><span class="num tta mono">${fmtDur(p.tta)}</span><span class="num date">${fmtDay(p.last)}</span></div>`;
@@ -429,16 +460,30 @@ function renderProblems(runDays, lastDay) {
 }
 
 // ---- problem panel ----
+// LCS line diff on what's left after the common start and end. Above ~2000 x 2000 changed lines the table
+// would be too big (O(n*m) time and memory), so the old lines show as removed and the new ones as added.
 function lineDiff(a, b) {
-  const A = a.split('\n'), B = b.split('\n'), n = A.length, m = B.length;
-  const L = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
-  const out = []; let i = 0, j = 0;
-  while (i < n || j < m) {
-    if (i < n && j < m && A[i] === B[j]) { out.push([' ', B[j], j + 1]); i++; j++; }
-    else if (j < m && (i >= n || L[i][j + 1] >= L[i + 1][j])) { out.push(['+', B[j], j + 1]); j++; }
-    else { out.push(['-', A[i], '']); i++; }
+  const A = a.split('\n'), B = b.split('\n');
+  let s = 0, ea = A.length, eb = B.length;
+  while (s < ea && s < eb && A[s] === B[s]) s++;
+  while (ea > s && eb > s && A[ea - 1] === B[eb - 1]) { ea--; eb--; }
+  const out = [];
+  for (let k = 0; k < s; k++) out.push([' ', B[k], k + 1]);
+  const n = ea - s, m = eb - s;
+  if (n * m > 4e6) {
+    for (let k = s; k < ea; k++) out.push(['-', A[k], '']);
+    for (let k = s; k < eb; k++) out.push(['+', B[k], k + 1]);
+  } else {
+    const W = m + 1, L = new Uint32Array((n + 1) * W);
+    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i * W + j] = A[s + i] === B[s + j] ? L[(i + 1) * W + j + 1] + 1 : Math.max(L[(i + 1) * W + j], L[i * W + j + 1]);
+    let i = 0, j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && A[s + i] === B[s + j]) { out.push([' ', B[s + j], s + j + 1]); i++; j++; }
+      else if (j < m && (i >= n || L[i * W + j + 1] >= L[(i + 1) * W + j])) { out.push(['+', B[s + j], s + j + 1]); j++; }
+      else { out.push(['-', A[s + i], '']); i++; }
+    }
   }
+  for (let k = eb; k < B.length; k++) out.push([' ', B[k], k + 1]);
   return out;
 }
 const codeHtml = (prev, code) => `<div class="code mono">${(prev ? lineDiff(prev, code) : code.split('\n').map((l, k) => [' ', l, k + 1]))
@@ -450,22 +495,22 @@ function cxHtml(e) {
   const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)], W = 180, H = 44;
   const P = pts.map((p, k) => [((xs[k] - x0) / (x1 - x0 || 1)) * W, H - ((ys[k] - y0) / (y1 - y0 || 1)) * H]);
   return `<div class="cx"><svg width="${W}" height="${H}" viewBox="-3 -3 ${W + 6} ${H + 6}"><polyline points="${P.map(p => p.map(v => v.toFixed(1)).join(',')).join(' ')}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>${P.map(([x, y]) => `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.2" fill="var(--accent)"/>`).join('')}</svg>
-    <div><div class="big mono">${esc(e.complexity)}</div><div class="k">n ${pts[0].n.toLocaleString()} to ${pts[pts.length - 1].n.toLocaleString()}</div></div></div>`;
+    <div><div class="big mono">${esc(e.complexity)}</div><div class="k">n ${esc((+pts[0].n).toLocaleString())} to ${esc((+pts[pts.length - 1].n).toLocaleString())}</div></div></div>`;
 }
 function pills(v) {
   return `<div class="runs">${v.runs.map(r => {
     if (r.event === 'analyze_run') return r.status === 'crash' ? '<span class="pill bad">Alt+F8 crash</span>' : `<span class="pill mono">${esc(r.complexity || r.status)}</span>`;
     if (r.compile_ok === false) return '<span class="pill bad">compile error</span>';
-    if (r.crash) return `<span class="pill bad">crash${r.crash.line ? ' · line ' + r.crash.line : ''}</span>`;
-    return `<span class="pill mono ${r.failed ? 'bad' : 'good'}">${r.passed}/${(r.passed || 0) + (r.failed || 0)}</span>`;
+    if (r.crash) return `<span class="pill bad">crash${r.crash.line ? ' · line ' + esc(r.crash.line) : ''}</span>`;
+    return `<span class="pill mono ${r.failed ? 'bad' : 'good'}">${esc(r.passed)}/${esc((r.passed || 0) + (r.failed || 0))}</span>`;
   }).join('')}</div>`;
 }
 function failHtml(v) {
   const r = v.runs.find(r => r.event === 'test_run' && r.failed > 0);
   if (!r) return '';
   const c = (r.cases || []).find(c => c.status === 'fail') || {};
-  if (c.input === undefined) return `<div class="fcase mono"><span class="l" style="grid-column:1/-1">case ${c.n || '?'} failed · input not recorded (older run)</span></div>`;
-  return `<div class="fcase mono"><span class="l" style="grid-column:1/-1">case ${c.n}</span>
+  if (c.input === undefined) return `<div class="fcase mono"><span class="l" style="grid-column:1/-1">case ${esc(c.n || '?')} failed · input not recorded (older run)</span></div>`;
+  return `<div class="fcase mono"><span class="l" style="grid-column:1/-1">case ${esc(c.n)}</span>
     <span class="l">input</span><span>${esc(c.input)}</span><span class="l">expected</span><span>${esc(c.expected)}</span><span class="l">got</span><span class="got">${esc(c.got)}</span></div>`;
 }
 // Every Alt+F7 / Alt+F8 run and LeetCode accept of a problem, newest first, named like LeetCode's verdicts.
@@ -492,9 +537,12 @@ function subsHtml(p) {
 function openProblem(slug) {
   const p = cur = problems.find(x => x.slug === slug);
   if (!p) return;
-  const steps = p.versions.map((v, k) => `${k ? '<span class="link"></span>' : ''}<button class="step ${v.ok ? 'pass' : 'fail'}" data-k="${k}"><span class="b">${v.ok
-    ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="${CHECK}"/></svg>`
-    : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M7 7l10 10M17 7L7 17"/></svg>'}</span><small>v${k + 1}</small></button>`).join('');
+  const STEP = {
+    pass: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="${CHECK}"/></svg>`,
+    fail: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M7 7l10 10M17 7L7 17"/></svg>',
+    untested: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M7 12h10"/></svg>',
+  };
+  const steps = p.versions.map((v, k) => `${k ? '<span class="link"></span>' : ''}<button class="step ${v.state}" data-k="${k}"${v.state === 'untested' ? ' title="Not tested: only Alt+F8"' : ''}><span class="b">${STEP[v.state]}</span><small>v${k + 1}</small></button>`).join('');
   $('#drawer').innerHTML = `
     <div class="dhead"><div><h2 class="disp">${esc(p.meta.title || slug)}</h2>
       <div class="meta">${st(p.status)}${p.meta.id ? `<span class="mono id">#${esc(p.meta.id)}</span>` : ''}<span class="diff" style="color:${dcol(p.meta.difficulty)}">${esc(p.meta.difficulty)}</span>${(p.meta.tags || []).map(t => `<span class="chip">${esc(t)}</span>`).join('')}
@@ -502,7 +550,7 @@ function openProblem(slug) {
       <button class="x" id="close" aria-label="Close">&times;</button></div>
     <div class="facts">
       <div><span class="k">Runs</span><b class="mono">${p.runs}</b></div><div><span class="k">Versions</span><b class="mono">${p.versions.length}</b></div>
-      <div><span class="k">Time to accept</span><b class="mono">${fmtDur(p.tta)}</b></div><div><span class="k">Slowest case</span><b class="mono">${p.maxMs != null ? p.maxMs + ' ms' : '-'}</b></div>
+      <div><span class="k">Time to accept</span><b class="mono">${fmtDur(p.tta)}</b></div><div><span class="k">Slowest case</span><b class="mono">${p.maxMs != null ? esc(p.maxMs) + ' ms' : '-'}</b></div>
       <div><span class="k">Complexity</span><b class="mono">${esc(p.cxLast || '-')}</b></div></div>
     ${p.note ? `<div class="note">${esc(p.note)}</div>` : ''}
     <div class="sect"><h4>Submissions</h4>${subsHtml(p)}</div>
@@ -511,17 +559,20 @@ function openProblem(slug) {
   $('#close').onclick = closeProblem;
   document.querySelectorAll('.step').forEach(b => b.onclick = () => showVersion(+b.dataset.k));
   document.querySelectorAll('.sub[data-k]').forEach(r => r.onclick = () => { showVersion(+r.dataset.k); $('#ver').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
-  const bad = p.versions.findIndex(v => !v.ok);
+  const bad = p.versions.findIndex(v => v.state === 'fail');
   showVersion(bad >= 0 && bad < p.versions.length - 1 ? bad + 1 : p.versions.length - 1);
   document.body.classList.add('open');
+  // the code comes separately; show it once it's here, on whichever version is selected then
+  if (!p.loaded) fetchSnap(slug).then(d => { attachCode(p, d); if (cur === p) showVersion(curK); });
 }
 function showVersion(k) {
   const v = cur.versions[k], prev = k ? cur.versions[k - 1] : null;
   if (!v) return;
+  curK = k;
   document.querySelectorAll('.step').forEach(b => b.setAttribute('aria-selected', +b.dataset.k === k));
-  const a = v.runs.filter(r => r.event === 'analyze_run' && r.complexity && r.complexity.startsWith('O(')).pop();
+  const a = v.runs.filter(r => r.event === 'analyze_run' && typeof r.complexity === 'string' && r.complexity.startsWith('O(')).pop();
   $('#ver').innerHTML = `<h4>v${k + 1} · ${fmtTime(v.ts)}${prev && prev.code ? ` · changes from v${k}` : ''}</h4>${pills(v)}${failHtml(v)}${a ? cxHtml(a) : ''}
-    ${v.code ? codeHtml(prev && prev.code, v.code) : '<span class="pill">code not saved for this version</span>'}`;
+    ${v.code ? codeHtml(prev && prev.code, v.code) : `<span class="pill">${cur.loaded ? 'code not saved for this version' : 'loading code'}</span>`}`;
 }
 function closeProblem() { document.body.classList.remove('open'); cur = null; }
 
@@ -563,11 +614,15 @@ function renderActivity(runDays) {
   const days = new Map();
   for (const e of DATA.events) {
     if (!['test_run', 'analyze_run', 'accepted'].includes(e.event)) continue;
-    const d = day0(e.ts);
-    if (!days.has(d)) days.set(d, { from: e.ts, to: e.ts, slugs: new Map() });
-    const x = days.get(d); if (e.event !== 'accepted') x.to = e.ts;
+    // an accept counts on the day LeetCode accepted it, like the weekly chart
+    const t = e.event === 'accepted' ? accTime(e) : e.ts, d = day0(t);
+    if (!days.has(d)) days.set(d, { from: t, to: null, slugs: new Map() });
+    const x = days.get(d);
+    if (tms(t) < tms(x.from)) x.from = t;
+    if (e.event !== 'accepted' && (x.to == null || tms(t) > tms(x.to))) x.to = t;
     const s = x.slugs.get(e.slug) || { runs: 0, acc: false }; if (e.event === 'accepted') s.acc = true; else s.runs++; x.slugs.set(e.slug, s);
   }
+  for (const x of days.values()) if (x.to == null) x.to = x.from;
   $('#log').innerHTML = days.size ? [...days].sort((a, b) => b[0] - a[0]).slice(0, 30).map(([d, x]) => `<div class="day"><div class="d">${fmtDay(d)}<small class="mono">${fmtTime(x.from)}–${fmtTime(x.to)}</small><small class="mono">${fmtDur(new Date(x.to) - new Date(x.from))}</small></div><ul>${[...x.slugs].map(([s, v]) => {
     const dd = (DATA.meta[s] || {}).difficulty;
     return `<li data-slug="${esc(s)}">${st(v.acc ? 'accepted' : 'attempted')}<span class="title">${esc(title(s))}</span><span class="diff" style="color:${dcol(dd)};font-size:12px">${esc(dd)}</span><span class="num mono">${v.runs} runs</span></li>`;
@@ -584,7 +639,7 @@ function renderInsights() {
     ['Integer overflow', e => e.crash && /signed integer overflow/.test(e.crash.cause || ''), 'var(--bad)'], ['Stack overflow', e => e.crash && /Stack overflow/i.test(e.crash.cause || ''), 'var(--bad)'],
     ['Timeout', e => e.crash && e.crash.cause === 'timeout', 'var(--bad)'], ['Compile error', e => e.compile_ok === false, 'var(--muted)']];
   const tr = DATA.events.filter(e => e.event === 'test_run');
-  const mh = mk.map(([l, f, c]) => { const hit = tr.filter(f); return hit.length ? `<div class="mist"><span class="n disp" style="color:${c}">${hit.length}</span><span>${l}<small>${[...new Set(hit.map(e => title(e.slug)))].join(', ')}</small></span></div>` : ''; }).join('');
+  const mh = mk.map(([l, f, c]) => { const hit = tr.filter(f); return hit.length ? `<div class="mist"><span class="n disp" style="color:${c}">${hit.length}</span><span>${l}<small>${[...new Set(hit.map(e => title(e.slug)))].map(esc).join(', ')}</small></span></div>` : ''; }).join('');
   $('#mistakes').innerHTML = mh || none('No failed runs yet.');
   const rp = problems.filter(p => p.runsToPass).sort((a, b) => b.runsToPass - a.runsToPass), rm = maxOf(rp.map(p => p.runsToPass));
   $('#rtp').innerHTML = rp.length ? rp.map(p => `<div><span class="title">${esc(p.meta.title || p.slug)}</span><span class="t" style="width:${p.runsToPass / rm * 100}%"><span style="flex:1;background:${dcol(p.meta.difficulty)}"></span></span><span class="num mono">${p.runsToPass}</span></div>`).join('') : none('Nothing has passed yet.');
@@ -612,12 +667,12 @@ function renderCoach() {
   $('#c-hab').textContent = habits.filter(f => f.status === 'active').length;
   $('#c-hab-sub').textContent = `${habits.filter(f => f.status === 'improving').length} improving`;
   $('#scores').classList.toggle('score', R.length > 0);  // the bar layout only when there are bars
-  $('#scores').innerHTML = R.length ? R.slice(-12).map(r => `<div title="${esc(title(r.slug))} · ${esc(r.label)}${r.pattern ? ' · ' + esc(r.pattern) : ''}"><b>${r.score}</b><span style="height:${r.score * 10}%;background:${LCOL[r.label] || 'var(--muted)'}"></span><small>${esc(title(r.slug))}</small></div>`).join('') : none('No reviews yet. Ask the coach to review a solution.');
+  $('#scores').innerHTML = R.length ? R.slice(-12).map(r => `<div title="${esc(title(r.slug))} · ${esc(r.label)}${r.pattern ? ' · ' + esc(r.pattern) : ''}"><b>${esc(r.score)}</b><span style="height:${(+r.score || 0) * 10}%;background:${LCOL[r.label] || 'var(--muted)'}"></span><small>${esc(title(r.slug))}</small></div>`).join('') : none('No reviews yet. Ask the coach to review a solution.');
   const chips = f => f.slugs.map(s => `<span class="chip">${esc(title(s))}</span>`).join('');
-  $('#m-habit').innerHTML = habits.length ? habits.map(f => `<div class="fact"><div class="ft"><span>${esc(f.text)}</span><span class="state ${f.status}">${f.status}</span></div>
+  $('#m-habit').innerHTML = habits.length ? habits.map(f => `<div class="fact"><div class="ft"><span>${esc(f.text)}</span><span class="state ${esc(f.status)}">${esc(f.status)}</span></div>
     <div class="ev">${chips(f)}<span class="seen">seen ${(f.evidence || []).length}× · last ${fmtDay(f.last_seen)}</span></div></div>`).join('') : none('None recorded.');
   const good = M.filter(f => (f.kind === 'strength' || f.kind === 'style') && f.status !== 'resolved');
-  $('#m-good').innerHTML = good.length ? good.map(f => `<div class="fact"><div class="ft"><span>${esc(f.text)}</span><span class="state ${f.kind}">${f.kind}</span></div><div class="ev">${chips(f)}</div></div>`).join('') : none('None recorded.');
+  $('#m-good').innerHTML = good.length ? good.map(f => `<div class="fact"><div class="ft"><span>${esc(f.text)}</span><span class="state ${esc(f.kind)}">${esc(f.kind)}</span></div><div class="ev">${chips(f)}</div></div>`).join('') : none('None recorded.');
   const goals = M.filter(f => f.kind === 'goal' && f.status !== 'resolved');
   $('#m-goal').innerHTML = goals.length ? goals.map(f => {
     const left = f.until ? Math.ceil((new Date(f.until + 'T23:59:59') - Date.now()) / 864e5) : null;
@@ -634,34 +689,57 @@ function renderRevise() {
   for (const p of problems) { const k = pattern(p); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(p); }
   const list = [...groups].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
   $('#revise').innerHTML = list.length ? list.map(([g, ps]) => `<div class="card rv"><h3>${esc(g)}<span class="peak">${ps.length}</span></h3><div class="body">${ps.map(p => `
-    <div class="rvi"><div class="rvh">${st(p.status)}<a class="title" data-slug="${p.slug}">${esc(p.meta.title || p.slug)}</a><span class="diff" style="color:${dcol(p.meta.difficulty)};font-size:12px">${esc(p.meta.difficulty)}</span>${p.cxLast ? `<span class="chip mono">${esc(p.cxLast)}</span>` : ''}</div>
+    <div class="rvi"><div class="rvh">${st(p.status)}<a class="title" data-slug="${esc(p.slug)}">${esc(p.meta.title || p.slug)}</a><span class="diff" style="color:${dcol(p.meta.difficulty)};font-size:12px">${esc(p.meta.difficulty)}</span>${p.cxLast ? `<span class="chip mono">${esc(p.cxLast)}</span>` : ''}</div>
       ${p.review && p.review.idea ? `<div class="idea">${esc(p.review.idea)}</div>` : ''}${p.note ? `<div class="rnote">${esc(p.note)}</div>` : ''}
-      ${p.code ? `<details><summary>Code</summary>${codeHtml(null, p.code)}</details>` : ''}</div>`).join('')}</div></div>`).join('') : none('Solved problems show up here, grouped by pattern.');
+      ${p.hasCode ? `<details data-code="${esc(p.slug)}"><summary>Code</summary></details>` : ''}</div>`).join('')}</div></div>`).join('') : none('Solved problems show up here, grouped by pattern.');
 }
+// Revise's code is fetched when its Code is opened
+document.addEventListener('toggle', e => {
+  const el = e.target;
+  if (!el.open || !el.dataset || !el.dataset.code || el.dataset.filled) return;
+  const p = problems.find(x => x.slug === el.dataset.code);
+  if (!p) return;
+  el.dataset.filled = '1';
+  fetchSnap(p.slug).then(d => {
+    if (!p.loaded) attachCode(p, d);
+    el.insertAdjacentHTML('beforeend', p.code ? codeHtml(null, p.code) : '<div class="none">Code not saved.</div>');
+  });
+}, true);
 
 function render() {
   problems = buildProblems();
   const runDays = new Map();
   for (const e of DATA.events) if (e.event === 'test_run' || e.event === 'analyze_run') runDays.set(day0(e.ts), (runDays.get(day0(e.ts)) || 0) + 1);
-  const lastDay = runDays.size ? maxOf([...runDays.keys()]) : day0(Date.now());
-  renderProblems(runDays, lastDay);
+  renderProblems(runDays, day0(Date.now()));
   renderActivity(runDays);
   renderInsights();
   renderCoach();
   renderRevise();
 }
 
+// Asks with the last ETag, so a refocus with nothing changed is a 304 with no body.
 async function load() {
-  let text;
-  try { text = await (await fetch('data.json', { cache: 'no-store' })).text(); }
-  catch { return; }  // the server stopped; keep what's on screen
+  let res, text, data;
+  try {
+    res = await fetch('data.json', { cache: 'no-store', headers: etag ? { 'If-None-Match': etag } : {} });
+    if (res.status === 304) return;
+    text = await res.text();
+  } catch { return; }  // the server stopped; keep what's on screen
+  if (!res.ok) return loadError(`the server answered ${res.status}`);
   if (text === lastText) return;
-  lastText = text;
-  DATA = JSON.parse(text);
-  const open = cur && cur.slug;
+  try { data = JSON.parse(text); } catch (e) { return loadError(e.message); }
+  lastText = text; etag = res.headers.get('ETag') || '';
+  for (const k of ['events', 'memory', 'weekly', 'code']) if (!Array.isArray(data[k])) data[k] = [];
+  for (const k of ['meta', 'status']) if (!data[k] || typeof data[k] !== 'object') data[k] = {};
+  data.events = data.events.filter(e => e && typeof e === 'object' && e.ts);
+  DATA = data;
+  snapCache.clear();
+  const open = cur && cur.slug, k = curK;
   render();
-  if (open) openProblem(open);
+  if (open) { openProblem(open); if (cur) showVersion(k); }
 }
+// keep what's on screen; on a first load, say why it's empty
+function loadError(why) { if (!DATA) $('#list').innerHTML = none(`Couldn't read the journey: ${esc(why)}`); }
 
 // ---- tabs, theme, clicks, deep links (#activity, #<slug>, #<slug>/<version>) ----
 function tab(name) {
