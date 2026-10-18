@@ -233,3 +233,62 @@ function Build-LcExe {
     [IO.File]::WriteAllText($linkStampPath, $linkStamp, $utf8)
     return @{ Ok = $true; Exe = $exe; Ms = $sw.ElapsedMilliseconds; Skipped = $false; Errors = ''; Stage = ''; Warnings = $warnings }
 }
+
+# ---- output: the label column ----
+
+# One output line: the label left-aligned in a 9-character column (DarkGray; warning Yellow, error Red),
+# then the text, in -Color when given. An empty label indents a continuation line.
+function Write-LcLabeled([string]$Label, [string]$Text, [string]$Color = '') {
+    $lc = switch ($Label) { 'warning' { 'Yellow' } 'error' { 'Red' } default { 'DarkGray' } }
+    Write-Host $Label.PadRight(9) -ForegroundColor $lc -NoNewline
+    if ($Color) { Write-Host $Text -ForegroundColor $Color } else { Write-Host $Text }
+}
+
+# g++'s output as label-column entries @(@{ Label; Text }): "<path>:<line>:<col>: warning|error|note: <msg>"
+# becomes Label warning/error/note and Text "line <line>: <msg>" ("<file> line <line>: ..." when the path
+# isn't -SrcPath; "harness" for the generated TUs), without " {aka ...}" and the trailing " [-Wflag]".
+# The source line g++ quotes is kept as its code alone (Label '', Text indented 4 more: 13 in all).
+# Context lines ("In function", "In file included from", "At global scope") and caret/fix-it lines are
+# dropped; consecutive duplicates collapse. A line that matches none of these (a linker error) comes back
+# as Label $null, Text unchanged.
+function Format-LcGppDiagnostics([string]$Text, [string]$SrcPath = '') {
+    $src = ''
+    if ($SrcPath) { try { $src = [IO.Path]::GetFullPath($SrcPath) } catch {} }
+    $out = New-Object Collections.ArrayList
+    $prev = $null
+    foreach ($line in @($Text -split '\r?\n')) {
+        if (-not $line.Trim()) { continue }
+        if ($line -match '^In file included from ' -or $line -match '^\s+from .+[:,]$') { continue }
+        if ($line -match '^\s*(\d+ |\+\+\+ )?\|') {
+            if ($line -match '^\s*\d+ \| ?(.*)$' -and $Matches[1].Trim()) { $e = @{ Label = ''; Text = (' ' * 4) + $Matches[1].Trim() } }
+            else { continue }  # caret, underline or fix-it line
+        }
+        elseif ($line -match '^((?:[A-Za-z]:)?[^:]+): (In |At global scope)') { continue }
+        elseif ($line -match '^((?:[A-Za-z]:)?[^:]+):(\d+):(?:\d+:)? (warning|error|fatal error|note): (.*)$') {
+            $path = $Matches[1]; $n = $Matches[2]; $kind = $Matches[3]; $msg = $Matches[4]
+            if ($kind -eq 'fatal error') { $kind = 'error' }
+            $msg = $msg -replace ' \{aka [^}]*\}', '' -replace '\s*\[-W[^\]]*\]$', ''
+            $full = ''
+            try { $full = [IO.Path]::GetFullPath($path) } catch {}
+            $where = "line ${n}"
+            if (-not $src -or -not $full -or -not $full.Equals($src, [StringComparison]::OrdinalIgnoreCase)) {
+                $leaf = ($path -split '[\\/]')[-1]
+                if ($leaf -match '-(user|harness)\.cpp$') { $leaf = 'harness' }
+                $where = "$leaf line ${n}"
+            }
+            $e = @{ Label = $kind; Text = "${where}: $msg" }
+        }
+        else { $e = @{ Label = $null; Text = $line } }
+        $key = "$($e.Label)|$($e.Text)"
+        if ($key -eq $prev) { continue }
+        $prev = $key
+        [void]$out.Add($e)
+    }
+    return $out.ToArray()
+}
+
+function Write-LcGppDiagnostics([string]$Text, [string]$SrcPath = '') {
+    foreach ($e in (Format-LcGppDiagnostics $Text $SrcPath)) {
+        if ($null -eq $e.Label) { Write-Host $e.Text } else { Write-LcLabeled $e.Label $e.Text }
+    }
+}

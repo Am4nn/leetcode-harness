@@ -122,11 +122,11 @@
     Assert-Equal (Get-LcShortName 'int Solution::f(std::vector<int, std::allocator<int> >&)::{lambda(auto:1&&, int)#1}::operator()<{lambda(auto:1&&, int)#1}&>({lambda(auto:1&&, int)#1}&, int) const') 'lambda in f'
     Assert-Equal (Get-LcShortName 'std::vector<int, std::allocator<int> > Solution::go<int>(int, int)') 'go<int>'
     Assert-Equal (Get-LcShortName 'long long pw<long long>(long long)') 'pw<long long>'
-    Assert-Equal (Format-LcCallsLine -N 30 -Profile @(@{ Name = 'Solution::climbStairs(int)'; Calls = 1664079; Depth = 30 })) 'Calls (n=30): climbStairs: 1,664,079 calls, max depth 30'
+    Assert-Equal (Format-LcCallsLine -N 30 -Profile @(@{ Name = 'Solution::climbStairs(int)'; Calls = 1664079; Depth = 30 })) 'climbStairs: 1,664,079 calls, max depth 30 at n = 30'
     $many = @(@{ Name = 'Solution::a(int)'; Calls = 9; Depth = 3 }, @{ Name = 'Solution::b()'; Calls = 1; Depth = 1 },
         @{ Name = 'Solution::c(int)'; Calls = 5; Depth = 1 }, @{ Name = 'Solution::d(int)'; Calls = 4; Depth = 2 })
-    Assert-Equal (Format-LcCallsLine -N 8 -Profile $many) 'Calls (n=8): a: 9 calls, max depth 3; c: 5 calls, max depth 1; d: 4 calls, max depth 2'
-    Assert-Equal (Format-LcCallsLine -N 8 -Profile @(@{ Name = 'Solution::f(int)'; Calls = 1; Depth = 1 }, @{ Name = 'Solution::g(int)'; Calls = 2; Depth = 1 })) 'Calls (n=8): g: 2 calls, max depth 1'
+    Assert-Equal (Format-LcCallsLine -N 8 -Profile $many) 'a: 9 calls, max depth 3; c: 5 calls, max depth 1; d: 4 calls, max depth 2 at n = 8'
+    Assert-Equal (Format-LcCallsLine -N 8 -Profile @(@{ Name = 'Solution::f(int)'; Calls = 1; Depth = 1 }, @{ Name = 'Solution::g(int)'; Calls = 2; Depth = 1 })) 'g: 2 calls, max depth 1 at n = 8'
     # R40: nothing to say when every function ran once (a non-recursive solution).
     Assert-Equal (Format-LcCallsLine -N 8 -Profile @(@{ Name = 'Solution::twoSum(int)'; Calls = 1; Depth = 1 }, @{ Name = 'Solution::Solution()'; Calls = 1; Depth = 1 })) ''
     # R41: a profile run that threw resolves to nothing, so no partial line is printed.

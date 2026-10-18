@@ -260,6 +260,31 @@ function Format-LcPerCallUs([double]$Us) {
     return $Us.ToString('0.00', $inv) + ' us/call'
 }
 
+# At most 5 of the timed points: the smallest, the largest and up to 3 in between, evenly by index.
+function Select-LcShownPoints($Points) {
+    $pts = @($Points)
+    if ($pts.Count -le 5) { return $pts }
+    $idx = @(0..4 | ForEach-Object { [int][Math]::Round($_ * ($pts.Count - 1) / 4.0, [MidpointRounding]::AwayFromZero) } | Select-Object -Unique)
+    return @($idx | ForEach-Object { $pts[$_] })
+}
+
+# The growth table: two aligned rows, "n" and "time" (a design problem's "per call"), for Select-LcShownPoints.
+function Format-LcPointsTable($Points, [switch]$PerCall) {
+    $pts = @(Select-LcShownPoints $Points)
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    $row = if ($PerCall) { 'per call' } else { 'time' }
+    $w0 = $row.Length + 2
+    $a = 'n'.PadRight($w0); $b = $row.PadRight($w0)
+    for ($i = 0; $i -lt $pts.Count; $i++) {
+        $n = ([long]$pts[$i].n).ToString($inv)
+        $t = if ($PerCall) { (Format-LcPerCallUs $pts[$i].per_call_us) -replace ' us/call$', 'us' } else { Format-LcDuration $pts[$i].ms }
+        $t = $t -replace ' ', ''
+        if ($i -lt $pts.Count - 1) { $w = [Math]::Max($n.Length, $t.Length) + 2; $n = $n.PadRight($w); $t = $t.PadRight($w) }
+        $a += $n; $b += $t
+    }
+    return @($a.TrimEnd(), $b.TrimEnd())
+}
+
 function Format-LcBytes([long]$Bytes) {
     $inv = [Globalization.CultureInfo]::InvariantCulture
     if ($Bytes -ge 104858) { return ($Bytes / 1048576.0).ToString('0.0', $inv) + ' MB' }
@@ -304,8 +329,9 @@ function Get-LcShortName([string]$Name) {
     return $last.Substring($cut + 1)
 }
 
-# The analyze line for the profiled functions (Resolve-LcProfile order): at most 3, and functions called
-# once (the entry point, a constructor) left out. '' when every function ran once (R40: nothing to say).
+# The text of analyze's "calls" line for the profiled functions (Resolve-LcProfile order): at most 3, and
+# functions called once (the entry point, a constructor) left out. '' when every function ran once (R40:
+# nothing to say).
 function Format-LcCallsLine([long]$N, $Profile) {
     $inv = [Globalization.CultureInfo]::InvariantCulture
     $list = @(@($Profile) | Where-Object { $_.Calls -gt 1 })
@@ -314,7 +340,7 @@ function Format-LcCallsLine([long]$N, $Profile) {
         $word = if ($_.Calls -eq 1) { 'call' } else { 'calls' }
         "$(Get-LcShortName $_.Name): $(([long]$_.Calls).ToString('N0', $inv)) $word, max depth $($_.Depth)"
     })
-    return "Calls (n=$N): " + ($items -join '; ')
+    return ($items -join '; ') + " at n = $N"
 }
 
 # Profile results lines ({"fn":"0x<hex>","calls":C,"depth":D}) -> @(@{ Name; Calls; Depth }), names from
