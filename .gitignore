@@ -10,3 +10,6 @@ build/
 
 # My LeetCode username (private; read by .zed/lc.ps1)
 .zed/leetcode-user.txt
+
+# Coach memory and weekly reads (private; written by .zed/lc-coach.ps1)
+journey/local/
