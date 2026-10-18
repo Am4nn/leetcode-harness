@@ -25,12 +25,13 @@ Windows only for now.
 1. Create `leetcode-solves/<slug>.cpp`, where the slug is the end of the problem URL, e.g. `two-sum`. Paste the starter code and solve it.
 2. Press **Alt+F7**. On the first run the harness:
    - fetches the problem from LeetCode's public API, with no login;
-   - writes the constraints and examples to `leetcode-solves/tests/<slug>.txt` and opens that file;
+   - writes the constraints and examples to `cases/<slug>/cases.txt` and opens that file;
    - runs every case.
 
    ```
    two-sum  (#1 Easy - Array, Hash Table)
-     PASS  1  [0,1]           0.02 ms
+
+     PASS  1  [0,1]           0.01 ms
      PASS  2  [1,2]           0.00 ms
      PASS  3  [0,1]           0.00 ms
      FAIL  4  got      [1,2]  0.00 ms
@@ -56,13 +57,16 @@ Windows only for now.
 5. Press **Alt+F8** for the analysis:
 
    ```
-   Complexity: looks O(n) (random inputs; worst case may differ)
-     n=19 2.1 us | n=39 4.2 us | n=78 8.3 us | n=156 0.02 ms | n=312 0.03 ms | n=625 0.07 ms | n=1250 0.16 ms | n=2500 0.30 ms | n=5000 0.55 ms | n=10000 1.10 ms
-   At n = 10000: est. 1.10 ms -> ok
-   Allocations at n=10000: 10010 allocs, 0.3 MB total, peak 0.2 MB
+   two-sum  (#1 Easy - Array, Hash Table)
+
+   growth   looks O(n)   (random inputs; worst case may differ)
+            n     19     78     625     2500    10000
+            time  2.0us  8.1us  0.07ms  0.29ms  1.11ms
+   TLE      est. 1.11 ms at n = 10000 -> ok
+   memory   10010 allocs, 0.3 MB total, peak 0.2 MB at n = 10000
    ```
 
-   It times your code at doubling input sizes up to the constraint maximum and fits the growth. Each run is capped at about 2 s; past that it extrapolates. Recursive solutions also get a line with call counts and recursion depth.
+   It times your code at doubling input sizes up to the constraint maximum and fits the growth. Each run is capped at about 2 s; past that it extrapolates. Recursive solutions also get a `calls` line with call counts and recursion depth, and compiler warnings show up as `warning  line N: ...` with the code line under it.
 
    The inputs are random, within the problem's constraints. They can miss the worst case, and the report says so.
 
@@ -91,7 +95,7 @@ Crashes are explained in plain words, e.g. "index out of range" or "stack overfl
 
 ## Brute-force check
 
-Write a slow, obviously correct version as `leetcode-solves/tests/<slug>.brute.cpp`, as a normal `class Solution`. Alt+F8 then runs both on 200 random inputs. On the first input where they disagree, it prints that input in test-file format, ready to paste in as a case.
+Write a slow, obviously correct version as `cases/<slug>/brute.cpp`, as a normal `class Solution`. Alt+F8 then runs both on 200 random inputs. On the first input where they disagree, it prints that input in test-file format, ready to paste in as a case.
 
 ## The journey
 
@@ -100,8 +104,9 @@ Everything lands in `journey/`:
 - `events.jsonl`: one JSON line per action (fetch, test run, solve, analyze, note). Nothing is ever deleted from it. It's meant to feed a web view of progress and patterns later.
 - `journey.md`: a table with one row per problem. Columns: date solved, difficulty, tags, complexity, slowest case time, attempts and your note.
 - `snapshots/<slug>/`: a copy of the solution each time it changes, so you can see it go from brute force to optimal.
+- `problems/<slug>.json`: the problem's title, difficulty, tags and examples as fetched from LeetCode, so runs work offline.
 
-When a problem passes for the first time, the solution, its test file and `journey/` are committed automatically. Nothing is ever pushed.
+When a problem passes for the first time, the solution, `cases/<slug>/` and `journey/` are committed automatically. Nothing is ever pushed.
 
 ## Speed
 
@@ -110,11 +115,10 @@ Measured on my laptop: about 3 s from saving an edit to seeing results, and 1.4 
 ## Layout
 
 ```
-leetcode-solves/          your solutions: <slug>.cpp
-  tests/<slug>.txt        examples + your cases (generated, then yours to edit)
-  tests/<slug>.brute.cpp  optional brute force
-  tests/.meta/            cached problem data, so runs work offline
-journey/                  event log, journey.md, snapshots
+leetcode-solves/          your solutions, nothing else: <slug>.cpp
+cases/<slug>/cases.txt    examples + your cases (generated, then yours to edit)
+cases/<slug>/brute.cpp    optional brute force
+journey/                  event log, journey.md, snapshots, cached problem data
 lc/                       C++ harness headers + self-tests
 .zed/                     the scripts behind every key, and tasks.json
 .clangd                   makes clangd know TreeNode/ListNode

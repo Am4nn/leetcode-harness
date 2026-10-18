@@ -33,7 +33,7 @@
     try { ConvertTo-LcCppType 'Node' | Out-Null } catch { $threw = $_.Exception.Message }
     Assert-Equal $threw 'unsupported LeetCode type: Node'
 
-    $src = [IO.File]::ReadAllText((Join-Path $repo 'leetcode-solves\concatenation-of-array.cpp'))
+    $src = [IO.File]::ReadAllText((Join-Path $repo 'lc\selftest\mismatch\concatenation-of-array.cpp'))
     $si = Get-LcInfoFromSource $src
     Assert-Equal $si.Method 'shuffle'
     Assert-Equal ($si.ParamNames -join ',') 'nums,n'

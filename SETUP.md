@@ -53,7 +53,7 @@ Remove-Item -Recurse -Force .git
 ```
 
 Then delete the author's progress:
-- `leetcode-solves\*`: the solutions. Keep the empty `leetcode-solves` folder.
+- `leetcode-solves\*`: the solutions. The folder itself must exist, so create it empty if it's missing (git doesn't keep empty folders).
 - `cases\`: the test files and brute forces. The harness recreates it on the first run.
 - `journey\`: the event log, snapshots, `journey.md` and the cached problem data in `journey\problems\`. The harness recreates it on the first run.
 - `docs\`: the author's design notes and build plan.
