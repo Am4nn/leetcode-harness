@@ -1,0 +1,25 @@
+{
+    "questionFrontendId":  "122",
+    "title":  "Best Time to Buy and Sell Stock II",
+    "titleSlug":  "best-time-to-buy-and-sell-stock-ii",
+    "difficulty":  "Medium",
+    "isPaidOnly":  false,
+    "topicTags":  [
+                      {
+                          "name":  "Array"
+                      },
+                      {
+                          "name":  "Dynamic Programming"
+                      },
+                      {
+                          "name":  "Greedy"
+                      }
+                  ],
+    "metaData":  "{\r\n  \"name\": \"maxProfit\",\r\n  \"params\": [\r\n    {\r\n      \"name\": \"prices\",\r\n      \"type\": \"integer[]\"\r\n    }\r\n  ],\r\n  \"return\": {\r\n    \"type\": \"integer\"\r\n  }\r\n}",
+    "exampleTestcaseList":  [
+                                "[7,1,5,3,6,4]",
+                                "[1,2,3,4,5]",
+                                "[7,6,4,3,1]"
+                            ],
+    "content":  "\u003cp\u003eYou are given an integer array \u003ccode\u003eprices\u003c/code\u003e where \u003ccode\u003eprices[i]\u003c/code\u003e is the price of a given stock on the \u003ccode\u003ei\u003csup\u003eth\u003c/sup\u003e\u003c/code\u003e day.\u003c/p\u003e\n\n\u003cp\u003eOn each day, you may decide to buy and/or sell the stock. You can only hold \u003cstrong\u003eat most one\u003c/strong\u003e share of the stock at any time. However, you can sell and buy the stock multiple times on the \u003cstrong\u003esame day\u003c/strong\u003e, ensuring you never hold more than one share of the stock.\u003c/p\u003e\n\n\u003cp\u003eFind and return \u003cem\u003ethe \u003cstrong\u003emaximum\u003c/strong\u003e profit you can achieve\u003c/em\u003e.\u003c/p\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 1:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e prices = [7,1,5,3,6,4]\n\u003cstrong\u003eOutput:\u003c/strong\u003e 7\n\u003cstrong\u003eExplanation:\u003c/strong\u003e Buy on day 2 (price = 1) and sell on day 3 (price = 5), profit = 5-1 = 4.\nThen buy on day 4 (price = 3) and sell on day 5 (price = 6), profit = 6-3 = 3.\nTotal profit is 4 + 3 = 7.\n\u003c/pre\u003e\n\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 2:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e prices = [1,2,3,4,5]\n\u003cstrong\u003eOutput:\u003c/strong\u003e 4\n\u003cstrong\u003eExplanation:\u003c/strong\u003e Buy on day 1 (price = 1) and sell on day 5 (price = 5), profit = 5-1 = 4.\nTotal profit is 4.\n\u003c/pre\u003e\n\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 3:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e prices = [7,6,4,3,1]\n\u003cstrong\u003eOutput:\u003c/strong\u003e 0\n\u003cstrong\u003eExplanation:\u003c/strong\u003e There is no way to make a positive profit, so we never buy the stock to achieve the maximum profit of 0.\n\u003c/pre\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong\u003eConstraints:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cul\u003e\n\t\u003cli\u003e\u003ccode\u003e1 \u0026lt;= prices.length \u0026lt;= 3 * 10\u003csup\u003e4\u003c/sup\u003e\u003c/code\u003e\u003c/li\u003e\n\t\u003cli\u003e\u003ccode\u003e0 \u0026lt;= prices[i] \u0026lt;= 10\u003csup\u003e4\u003c/sup\u003e\u003c/code\u003e\u003c/li\u003e\n\u003c/ul\u003e\n"
+}
