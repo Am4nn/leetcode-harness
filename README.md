@@ -78,6 +78,7 @@ One-glance version: [CHEATSHEET.png](CHEATSHEET.png).
 |---|---|
 | Alt+F7 | LeetCode test: examples plus your cases, compared |
 | Alt+F8 | LeetCode analyze: complexity, TLE risk, allocations, call counts, brute-force check |
+| Alt+F9 | Open the journey view in your browser |
 | F7 | Run any C++ file that has a `main()` |
 | Shift+F7 | Run it with `input.txt` (next to the file) as stdin |
 | Ctrl+F7 | Compile only, to check for errors |
@@ -117,6 +118,18 @@ Every Alt+F7 run where all cases pass commits the solution, `cases/<slug>/` and 
 `CLAUDE.md` tells a coding agent how to coach you here: hints before answers, reviews in a fixed format, and claims checked by running your code. Every run from a Zed key also saves its terminal output and a copy of the source to `build/runs/`, which keeps the last 50 and is git-ignored. The agent reads these with `.zed/lc-context.ps1`, so you can ask "why did that Alt+F7 fail" or "what's wrong at line 15" without pasting anything.
 
 The agent also records the hints, solutions and review scores it gives you, and keeps a memory about you: mistakes you repeat, strengths, coding style and goals, each with the problems behind it. The memory and weekly reads are in `journey/local/`, which is git-ignored. `.zed/lc-stats.ps1` counts results per tag, mistakes by kind, complexity changes and the review score trend. The agent uses it to answer "what's my weakness" or "how did my week go".
+
+## The journey view
+
+Alt+F9 starts a small local server (`.zed/lc-view.ps1`, port 8790) and opens a read-only page over `journey/` and your solutions. It reads the files again on each load and whenever you switch back to the tab, so it always shows your latest runs.
+
+- **Problems:** solved count by difficulty, runs to pass, time to accept, and every problem. Click one for its LeetCode-style submission list, the failing case of each wrong answer and the code diff between versions.
+- **Activity:** a year of practice by day, accepted problems per week, when you practice, and each session.
+- **Insights:** tags, mistakes by kind, runs to pass, time to accept and complexity changes.
+- **Coach:** review scores, hints used, and what the coach has saved about you.
+- **Revise:** problems grouped by pattern, each with your note, the key idea from its review and your final code.
+
+The server stops when you close its terminal in Zed. Pressing Alt+F9 again while it runs just opens the page.
 
 ## Speed
 

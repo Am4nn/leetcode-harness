@@ -38,7 +38,12 @@
         Assert-Equal $r.Out 'recorded review: two-sum'
         $rv = @(Read-LcEvents $journey -Slug 'two-sum' | Where-Object { $_.event -eq 'review' })[0]
         Assert-True ($rv.score -eq 7 -and $rv.label -eq 'Good') "review fields: $($rv | ConvertTo-Json -Compress)"
+        Assert-True ($null -eq $rv.idea) 'review: idea is left out when not given'
         Assert-Equal $rv.pattern 'Hash | Map \ y'
+        $r = Invoke-Coach @('review', '-Slug', 'two-sum', '-Score', '8', '-Label', 'Great', '-Pattern', 'Hash Map', '-Idea', 'Store each value''s index; look up target - x', '-Now', '2026-10-18T10:02:20+05:30')
+        Assert-Equal $r.Code 0 "review -Idea exit code`n$($r.Out)"
+        $rv = @(Read-LcEvents $journey -Slug 'two-sum' | Where-Object { $_.event -eq 'review' })[-1]
+        Assert-Equal $rv.idea "Store each value's index; look up target - x"
         # Quotes and newlines (the command line can't carry them reliably): straight into the library.
         . (Join-Path $repo '.zed\lc\coach-events.ps1')
         $code = Invoke-LcCoachEvent @{ Command = 'review'; Slug = 'two-sum'; Score = 6; Label = 'fair'; Pattern = "say ""hi""`nthere"; JourneyRoot = $journey

@@ -2,7 +2,7 @@
 # review) and the local coach memory (journey/local/). One confirmation line per command; never commits
 # or pushes. Exit code 1 on bad input, with nothing written.
 #   hint|solution -Slug s
-#   review -Slug s -Score 1-10 -Label Poor|Fair|Good|Great -Pattern p
+#   review -Slug s -Score 1-10 -Label Poor|Fair|Good|Great -Pattern p [-Idea one-line-key-idea]
 #   remember -Kind k -Text t [-Evidence 'slug:ref',...] [-Source coach|user] [-Until yyyy-MM-dd] [-Replaces id]
 #   forget|resolve -Id id     edit -Id id -Text t     memory     read -Slug s     weekly -Text markdown
 # -TextFile <path> reads -Text from a UTF-8 file: PS 5.1 drops double quotes inside command-line arguments,
@@ -16,6 +16,7 @@ param(
     [int]$Score = 0,
     [string]$Label = '',
     [string]$Pattern = '',
+    [string]$Idea = '',
     [string]$Kind = '',
     [string]$Text = '',
     [string]$TextFile = '',
@@ -38,7 +39,7 @@ if ($TextFile) { $Text = [IO.File]::ReadAllText($TextFile, [Text.Encoding]::UTF8
 $nowDt = if ($Now) { [DateTimeOffset]::Parse($Now, [Globalization.CultureInfo]::InvariantCulture).LocalDateTime } else { Get-Date }
 
 $A = @{
-    Command = $Command; Slug = $Slug; Score = $Score; Label = $Label; Pattern = $Pattern; Kind = $Kind; Text = $Text
+    Command = $Command; Slug = $Slug; Score = $Score; Label = $Label; Pattern = $Pattern; Idea = $Idea; Kind = $Kind; Text = $Text
     Evidence = [string[]]$Evidence; Source = $Source; Until = $Until; Replaces = $Replaces; Id = $Id
     JourneyRoot = [IO.Path]::GetFullPath($JourneyRoot); SolutionsRoot = [IO.Path]::GetFullPath($SolutionsRoot); Now = $nowDt
 }

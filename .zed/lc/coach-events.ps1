@@ -1,7 +1,8 @@
 # Coach events in the journey (docs/2026-10-18-coach-design.md): hint, solution and review, written for
 # the chat agent by .zed/lc-coach.ps1. Function library: dot-source it after journey.ps1.
 
-# $A: Command (hint|solution|review), Slug, Score, Label, Pattern, JourneyRoot and SolutionsRoot (full
+# $A: Command (hint|solution|review), Slug, Score, Label, Pattern, Idea (optional: the review's key idea in
+# one line, shown on the journey view's Revise page), JourneyRoot and SolutionsRoot (full
 # paths), Now ([datetime]). Writes one event, rebuilds journey.md and prints one line. Returns the exit
 # code: 0, or 1 on bad input with nothing written.
 function Invoke-LcCoachEvent([hashtable]$A) {
@@ -17,6 +18,8 @@ function Invoke-LcCoachEvent([hashtable]$A) {
         if (-not $label) { Write-Host 'review needs -Label Poor, Fair, Good or Great'; return 1 }
         if (-not $pattern) { Write-Host 'review needs -Pattern'; return 1 }
         $data.score = $score; $data.label = $label; $data.pattern = Limit-LcText $pattern
+        $idea = ([string]$A.Idea -replace '[\r\n]+', ' ').Trim()
+        if ($idea) { $data.idea = Limit-LcText $idea 300 }
     }
 
     # file and src_hash come from the solution file as it is now ('' for both when it doesn't exist),

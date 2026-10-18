@@ -61,7 +61,7 @@ Run these as `powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc-coach.
 - **Record what you gave:**
   - after each hint from the hint ladder: `hint -Slug <slug>`;
   - after showing the full solution: `solution -Slug <slug>`;
-  - after a review: `review -Slug <slug> -Score N -Label <Poor|Fair|Good|Great> -Pattern "<name>"`.
+  - after a review: `review -Slug <slug> -Score N -Label <Poor|Fair|Good|Great> -Pattern "<name>" -Idea "<the key idea in one line>"`. The journey view's Revise page shows the idea next to my code, so write it as something I can revise from.
 
   Debug help ("why did it fail", "line 15") is not a hint; don't record it.
 - **Memory.** `lc-context.ps1` prints it under "Memory", so you always see it.
