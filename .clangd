@@ -6,6 +6,6 @@ CompileFlags:
 
 ---
 If:
-  PathMatch: [leetcode-solves/.*, lc/selftest/.*]
+  PathMatch: [leetcode-solves/.*, cases/.*, lc/selftest/.*]
 CompileFlags:
   Add: [-include, C:/Aman/Coding-Bamzii/dsa/lc/lc-prelude.h]

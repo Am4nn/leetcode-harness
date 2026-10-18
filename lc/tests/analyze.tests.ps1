@@ -184,7 +184,7 @@
     . (Join-Path $repo '.zed\lc\testfile.ps1')
     $env:LC_BUILD_ROOT = Join-Path $env:TEMP 'lc-analyze-build'
     try {
-        $brute = Join-Path $repo 'lc\selftest\bugged\tests\climbing-stairs.brute.cpp'
+        $brute = Join-Path $repo 'lc\selftest\cases\climbing-stairs\brute.cpp'
         New-Item -ItemType Directory -Force $env:LC_BUILD_ROOT | Out-Null
         $specPath = Join-Path $env:LC_BUILD_ROOT 'brute-spec.txt'
         [IO.File]::WriteAllText($specPath, "size n`nparam n val 1 45`n", (New-Object Text.UTF8Encoding $false))

@@ -48,7 +48,7 @@ They want one generic harness that runs any LeetCode solution file unchanged, co
 1. Create `leetcode-solves/<slug>.cpp`, where `<slug>` is the last part of the problem URL (e.g. `concatenation-of-array`). Paste LeetCode's starter code and solve.
 2. Press the **LeetCode test** key. On the first run for a slug the harness:
    - fetches the problem from LeetCode's public GraphQL endpoint,
-   - writes `leetcode-solves/tests/<slug>.txt` with the constraints and examples,
+   - writes `cases/<slug>/cases.txt` with the constraints and examples,
    - opens that file in Zed (`zed <path>`), and
    - runs the cases.
 3. The user can add their own cases to the test file. A case **with** `Output:` is compared; a case **without** it just prints the result.
@@ -65,7 +65,7 @@ Verified 2026-10-17: `POST https://leetcode.com/graphql` with a `Referer: https:
 - `exampleTestcaseList`: the raw example **inputs** only, one parameter per line.
 - `content`: the problem HTML. The expected **outputs** (`Output:` in the example blocks) and the **Constraints** list must be parsed from here.
 
-Cache the response at `leetcode-solves/tests/.meta/<slug>.json` so later runs and the journey log work offline.
+Cache the response at `journey/problems/<slug>.json` (`<JourneyRoot>/problems/`) so later runs and the journey log work offline. A definite "no such problem" answer is cached as `journey/problems/<slug>.none`. Nothing the harness owns lives in `leetcode-solves/`, which holds only the user's `<slug>.cpp` files.
 
 Failure handling:
 - **Offline, unknown slug or 404** (e.g. a file not named after a problem): continue without metadata. Find the method by reading the source; it should be the single public method of `class Solution`. Say once, in one line, that the problem couldn't be fetched.
@@ -73,7 +73,7 @@ Failure handling:
 
 ## Test file format
 
-`leetcode-solves/tests/<slug>.txt`, generated on first run and edited freely afterwards:
+`cases/<slug>/cases.txt` (`<CasesRoot>/<slug>/`, by default `<dsa>/cases/`), generated on first run and edited freely afterwards:
 
 ```
 # Concatenation of Array (#1929, Easy) https://leetcode.com/problems/concatenation-of-array/
@@ -122,7 +122,7 @@ Requirements:
 - **Crashes:** reuse `run-cpp.ps1`'s crash explanation and gdb crash-line replay, and also say which case crashed.
 - **Speed:** precompile `bits/stdc++.h` + `lc.h` (PCH). Skip recompiling when neither the solution nor the wrapper changed (hash check).
 
-**Editor support.** LeetCode starter code uses `TreeNode`/`ListNode` without defining them, and often has no `#include`. Add a `.clangd` rule for `leetcode-solves/` that force-includes a small `lc-prelude.h` (`bits/stdc++.h`, `using namespace std;`, `TreeNode`, `ListNode`). That way clangd shows no false errors. The wrapper includes the same prelude.
+**Editor support.** LeetCode starter code uses `TreeNode`/`ListNode` without defining them, and often has no `#include`. Add a `.clangd` rule for `leetcode-solves/` and `cases/` (brute forces) that force-includes a small `lc-prelude.h` (`bits/stdc++.h`, `using namespace std;`, `TreeNode`, `ListNode`). That way clangd shows no false errors. The wrapper includes the same prelude.
 
 ## Test task output
 
@@ -159,7 +159,7 @@ Runs in its own build without the debug checks (plain `-O2`), so timing is close
   - Report **cost per call** ("get/put look O(1) each"), not total time. Allocation and call stats are reported as usual.
   - The brute-force check works the same way: both executables replay the same seeded call sequence, and the results are compared call by call.
 - **Brute-force check (optional):**
-  - If `leetcode-solves/tests/<slug>.brute.cpp` exists, written as a normal LeetCode-style `class Solution`, build it as a second executable.
+  - If `cases/<slug>/brute.cpp` exists, written as a normal LeetCode-style `class Solution`, build it as a second executable.
   - Run both executables on the same seeded small random inputs and stop at the first input where the outputs differ. Print that input in test-file format so it can be pasted in as a case.
 
 ## Event log (for the future web view)
@@ -212,14 +212,14 @@ dsa/
 │   ├── common.ps1       compiler paths, flags, crash explain, gdb replay, Finish
 │   └── lc.ps1           -Mode test | analyze
 ├── leetcode-solves/
-│   ├── <slug>.cpp
-│   └── tests/
-│       ├── <slug>.txt
-│       ├── <slug>.brute.cpp   (optional)
-│       └── .meta/<slug>.json
+│   └── <slug>.cpp       the user's files only
+├── cases/<slug>/
+│   ├── cases.txt
+│   └── brute.cpp        (optional)
 ├── journey/
 │   ├── events.jsonl
 │   ├── journey.md
+│   ├── problems/<slug>.json   cached LeetCode data (<slug>.none: not a problem)
 │   └── snapshots/<slug>/<ts>.cpp
 └── build/               wrappers, PCH, exes (disposable)
 ```
@@ -227,8 +227,8 @@ dsa/
 ## Done when
 
 **Sandbox (my call).** Self-tests must not pollute the user's real journey:
-- Fixtures live in `lc/selftest/` (their own `.cpp` files and `tests/`).
-- `lc.ps1` takes a `-JourneyRoot` override, which the self-test points at a throwaway folder.
+- Fixtures live in `lc/selftest/`: their own `.cpp` files, `problems/<slug>.json` (copied into the throwaway journey root), `cases/<slug>/` (the cases root) and `variant-cases/<slug>/` (a second cases root for a variant with its own test file).
+- `lc.ps1` takes `-JourneyRoot` and `-CasesRoot` overrides, which the self-test points at throwaway folders.
 - The user's existing `leetcode-solves/` files are never modified by the build. `leetcode-solves/concatenation-of-array.cpp` actually holds #1470 Shuffle the Array, so the self-test uses its own correct fixture.
 
 **Parameter mismatch (my call).** When the solution's method takes parameters the test case doesn't supply (e.g. a mismatched file), stop with one line naming the missing parameters. Don't prompt.
@@ -264,6 +264,6 @@ Also:
 - **Test-mode timeout:** 30 s.
 - **journey.md:** lists unsolved problems too, with `-` as the date.
 - **Git:** `journey/` is fully tracked, including events and snapshots.
-- **Auto-commit on solve:** when a `solved` event is written (after the note prompt), commit only the solution, its test file, its `.meta` cache and `journey/`, using `git commit -- <paths>`. The message is `solve: <slug> (<Difficulty>)`. Never push. If the folder isn't a git repo or the commit fails, print one line and carry on.
+- **Auto-commit on solve:** when a `solved` event is written (after the note prompt), commit only the solution, its `cases/<slug>/` folder and `journey/` (which holds `problems/<slug>.json`), using `git commit -- <paths>`. The message is `solve: <slug> (<Difficulty>)`. Never push. If the folder isn't a git repo or the commit fails, print one line and carry on.
 - **Random promises:** follow "sorted" (ascending / non-decreasing / increasing) and "distinct / unique" when the constraints say so. "Strictly increasing" means sorted and distinct. Everything else stays plain random.
 - **Build branch:** `lc-harness`. Merge into `main` and delete the branch once all tests pass.

@@ -358,7 +358,7 @@ function Read-LcCaseResults([string]$Path) {
     return $res
 }
 
-# Brute-force check (analyze, when tests/<slug>.brute.cpp exists). Builds the brute file as a bench exe of
+# Brute-force check (analyze, when cases/<slug>/brute.cpp exists). Builds the brute file as a bench exe of
 # its own ('brute', same harness), generates 200 random cases with n in [1, 10] (seed 1), takes the brute's
 # answers as the expected outputs and runs the solution's bench exe on them.
 # Returns @{ Cases; Mismatch = $null | @{ Input = <'Input: ...' line>; Got; Expected };
