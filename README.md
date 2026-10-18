@@ -72,6 +72,8 @@ Windows only for now.
 
 ## Keys
 
+One-glance version: [CHEATSHEET.png](CHEATSHEET.png).
+
 | Key | What it does |
 |---|---|
 | Alt+F7 | LeetCode test: examples plus your cases, compared |
