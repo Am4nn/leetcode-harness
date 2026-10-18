@@ -59,6 +59,18 @@
     # The noise floor is 0.05 us (batched timing): move-zeroes at n <= 1e4 (0.1-4.9 us) gets a fit.
     Assert-Equal (Get-LcComplexity @(@{ n = 78; ms = 0.0001 }, @{ n = 625; ms = 0.0004 }, @{ n = 2500; ms = 0.0012 }, @{ n = 10000; ms = 0.0049 })).Label 'O(n)'
     Assert-Equal (Get-LcComplexity (& $pts 10000, 20000, 40000, 80000 { param($n) 1e-6 * $n })).Label 'O(n)'
+    # product-of-array-except-self (O(n)): ~3 ns per element, then ~4.3 ns once its arrays outgrow the cache
+    $cache = @(@{ n = 195; ms = 0.000661 }, @{ n = 390; ms = 0.001123 }, @{ n = 781; ms = 0.00217 }, @{ n = 1562; ms = 0.005207 },
+        @{ n = 3125; ms = 0.009341 }, @{ n = 6250; ms = 0.019396 }, @{ n = 12500; ms = 0.03785 }, @{ n = 25000; ms = 0.0862 },
+        @{ n = 50000; ms = 0.22172 }, @{ n = 100000; ms = 0.4298 })
+    $fit = Get-LcComplexity $cache
+    Assert-Equal $fit.Label 'O(n)'
+    Assert-True ([math]::Abs((Get-LcEstimateMs -Fit $fit -N 100000) - 0.4298) -le 1e-9) 'analyze: estimate from the largest size'
+    # lru-cache (O(1) per call): 0.057 us per call rising to 0.082 us over a 512x range of n
+    $lru = @(@{ n = 390; ms = 0.0223 }, @{ n = 781; ms = 0.0495 }, @{ n = 1562; ms = 0.1107 }, @{ n = 3125; ms = 0.2219 },
+        @{ n = 6250; ms = 0.4499 }, @{ n = 12500; ms = 0.939 }, @{ n = 25000; ms = 1.8763 }, @{ n = 50000; ms = 3.9613 },
+        @{ n = 100000; ms = 8.1233 }, @{ n = 200000; ms = 16.4639 })
+    Assert-Equal (Get-LcComplexity $lru).Label 'O(n)'
 
     $fit = Get-LcComplexity (& $pts 1000, 2000, 4000, 8000 { param($n) 1e-6 * $n * $n })
     $est = Get-LcEstimateMs -Fit $fit -N 100000

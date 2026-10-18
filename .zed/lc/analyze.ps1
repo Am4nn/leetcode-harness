@@ -178,17 +178,22 @@ function Get-LcComplexity {
     $maxN = ($pts | ForEach-Object { [double]$_.n } | Measure-Object -Maximum).Maximum
     $labels = @('O(1)', 'O(log n)', 'O(n)', 'O(n log n)', 'O(n^2)', 'O(n^3)')
     if ($maxN -le 64) { $labels += 'O(2^n)' }
+    $top = $pts | Sort-Object { [double]$_.n } | Select-Object -Last 1
     $best = $null
     foreach ($l in $labels) {
-        $sff = 0.0; $sfy = 0.0
-        foreach ($p in $pts) { $f = Get-LcComplexityShape $l ([double]$p.n); $sff += $f * $f; $sfy += $f * [double]$p.ms }
-        if ($sff -le 0 -or $sfy -le 0) { continue }
-        $c = $sfy / $sff
+        # Scaled in log space, as it is scored. A linear least-squares scale follows the largest n, where
+        # cache misses slow every step, and that slowdown then reads as an extra log n (O(n) as O(n log n)).
+        $logs = @(foreach ($p in $pts) { [math]::Log([double]$p.ms / (Get-LcComplexityShape $l ([double]$p.n))) })
+        $mean = ($logs | Measure-Object -Average).Average
         $score = 0.0
-        foreach ($p in $pts) { $r = [math]::Log([double]$p.ms / ($c * (Get-LcComplexityShape $l ([double]$p.n)))); $score += $r * $r }
-        if ($null -eq $best -or $score -lt $best.Score - 1e-9) { $best = @{ Label = $l; Coef = $c; Score = $score } }
+        foreach ($r in $logs) { $score += ($r - $mean) * ($r - $mean) }
+        # Labels go from simple to complex; a more complex one must halve the error to win. Cache effects
+        # make the cost per step creep up with n, which fits the next label up about as well (a coin toss).
+        if ($null -eq $best -or $score -lt $best.Score * 0.5 - 1e-12) { $best = @{ Label = $l; Score = $score } }
     }
-    return [pscustomobject]@{ Label = $best.Label; Coef = [double]$best.Coef; TooFast = $false }
+    # The estimate grows from the largest measured size, so it keeps the cache slowdown seen there.
+    $coef = [double]$top.ms / (Get-LcComplexityShape $best.Label ([double]$top.n))
+    return [pscustomobject]@{ Label = $best.Label; Coef = $coef; TooFast = $false }
 }
 
 function Get-LcEstimateMs {
