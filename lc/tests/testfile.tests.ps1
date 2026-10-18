@@ -5,13 +5,13 @@
     . (Join-Path $repo '.zed\lc\info.ps1')
     . (Join-Path $repo '.zed\lc\fetch.ps1')
     . (Join-Path $repo '.zed\lc\testfile.ps1')
-    $metaDir = Join-Path $repo 'lc\selftest\tests'
+    $metaDir = Join-Path $repo 'lc\selftest\problems'
     $utf8 = New-Object Text.UTF8Encoding $false
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('lc-testfile-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory $tmp | Out-Null
     try {
         function Get-Fixture([string]$slug) {
-            $r = Get-LcCachedQuestion -TestsDir $metaDir -Slug $slug -Offline
+            $r = Get-LcCachedQuestion -ProblemsDir $metaDir -Slug $slug -Offline
             Assert-True ($null -ne $r.Question) "fixture $slug missing"
             Assert-True (-not $r.Fetched) 'cache hit must not count as fetched'
             return $r.Question
@@ -24,10 +24,10 @@
         }
 
         # offline + no cache -> null, not fetched
-        $miss = Get-LcCachedQuestion -TestsDir $tmp -Slug 'no-such' -Offline
+        $miss = Get-LcCachedQuestion -ProblemsDir $tmp -Slug 'no-such' -Offline
         Assert-True ($null -eq $miss.Question -and -not $miss.Fetched) 'offline miss'
 
-        # "no such problem" is cached as tests/.meta/<slug>.none; network errors are not (stubbed fetch)
+        # "no such problem" is cached as <journey>/problems/<slug>.none; network errors are not (stubbed fetch)
         & {
             $calls = @{ n = 0; missing = $true }
             function Get-LcQuestion([string]$Slug) {
@@ -36,21 +36,33 @@
                 $script:LcFetchError = if ($calls.missing) { "no such problem: $Slug" } else { 'timed out' }
                 return $null
             }
-            $r1 = Get-LcCachedQuestion -TestsDir $tmp -Slug 'my-scratch'
+            $r1 = Get-LcCachedQuestion -ProblemsDir $tmp -Slug 'my-scratch'
             Assert-True ($null -eq $r1.Question -and $r1.Tried -and -not $r1.Fetched -and $r1.NotProblem) 'missing: first call tries'
-            Assert-True (Test-Path -LiteralPath (Join-Path $tmp '.meta\my-scratch.none')) 'missing: marker written'
-            $r2 = Get-LcCachedQuestion -TestsDir $tmp -Slug 'my-scratch'
+            Assert-True (Test-Path -LiteralPath (Join-Path $tmp 'my-scratch.none')) 'missing: marker written'
+            $r2 = Get-LcCachedQuestion -ProblemsDir $tmp -Slug 'my-scratch'
             Assert-True ($null -eq $r2.Question -and -not $r2.Tried -and $r2.NotProblem) 'missing: marker skips the fetch'
-            $r2o = Get-LcCachedQuestion -TestsDir $tmp -Slug 'my-scratch' -Offline
+            $r2o = Get-LcCachedQuestion -ProblemsDir $tmp -Slug 'my-scratch' -Offline
             Assert-True ($r2o.NotProblem -and -not $r2o.Tried) 'missing: marker read offline too'
             Assert-Equal $calls.n 1 'missing: fetched once'
 
             $calls.missing = $false
-            $r3 = Get-LcCachedQuestion -TestsDir $tmp -Slug 'flaky'
+            $r3 = Get-LcCachedQuestion -ProblemsDir $tmp -Slug 'flaky'
             Assert-True ($null -eq $r3.Question -and $r3.Tried -and -not $r3.NotProblem) 'network error: tried'
-            Assert-True (-not (Test-Path -LiteralPath (Join-Path $tmp '.meta\flaky.none'))) 'network error: no marker'
-            $null = Get-LcCachedQuestion -TestsDir $tmp -Slug 'flaky'
+            Assert-True (-not (Test-Path -LiteralPath (Join-Path $tmp 'flaky.none'))) 'network error: no marker'
+            $null = Get-LcCachedQuestion -ProblemsDir $tmp -Slug 'flaky'
             Assert-Equal $calls.n 3 'network error: retried'
+        }
+
+        # a fetched problem is cached as <journey>/problems/<slug>.json (stubbed fetch)
+        & {
+            $fixture = (Get-Fixture 'two-sum')
+            function Get-LcQuestion([string]$Slug) { return $fixture }
+            $pd = Join-Path $tmp 'problems'
+            $r = Get-LcCachedQuestion -ProblemsDir $pd -Slug 'two-sum'
+            Assert-True ($r.Fetched -and $r.Tried -and $r.Question.title -eq 'Two Sum') 'fetch: fetched'
+            Assert-Equal (@(Get-ChildItem -LiteralPath $pd -Force | ForEach-Object { $_.Name }) -join '|') 'two-sum.json'
+            $again = Get-LcCachedQuestion -ProblemsDir $pd -Slug 'two-sum' -Offline
+            Assert-True (-not $again.Fetched -and $again.Question.title -eq 'Two Sum') 'fetch: cached copy read back'
         }
 
         # html conversion

@@ -53,8 +53,9 @@ Remove-Item -Recurse -Force .git
 ```
 
 Then delete the author's progress:
-- `leetcode-solves\*`: solutions, `tests\` and the cached problem data in `tests\.meta\`. Keep the empty `leetcode-solves` folder.
-- `journey\`: the event log, snapshots and `journey.md`. The harness recreates it on the first run.
+- `leetcode-solves\*`: the solutions. Keep the empty `leetcode-solves` folder.
+- `cases\`: the test files and brute forces. The harness recreates it on the first run.
+- `journey\`: the event log, snapshots, `journey.md` and the cached problem data in `journey\problems\`. The harness recreates it on the first run.
 - `docs\`: the author's design notes and build plan.
 
 Keep `lc\`, `.zed\`, `.clangd`, `.gitignore`, `README.md`, `SETUP.md` and `LICENSE`.
@@ -125,10 +126,10 @@ Run one offline test on a copy of a bundled sample, so nothing lands in the user
 
 ```powershell
 $t = "$env:TEMP\lc-setup-check"
-New-Item -ItemType Directory -Force "$t\tests\.meta" | Out-Null
+New-Item -ItemType Directory -Force "$t\journey\problems" | Out-Null
 Copy-Item lc\selftest\two-sum.cpp $t
-Copy-Item lc\selftest\tests\.meta\two-sum.json "$t\tests\.meta"
-powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc.ps1 -Mode test -NoWait -NoOpen -Offline -NoCommit -JourneyRoot "$t\journey" "$t\two-sum.cpp"
+Copy-Item lc\selftest\problems\two-sum.json "$t\journey\problems"
+powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc.ps1 -Mode test -NoWait -NoOpen -Offline -NoCommit -JourneyRoot "$t\journey" -CasesRoot "$t\cases" "$t\two-sum.cpp"
 ```
 
 Check: the output ends with `3/3 passed` and has no FAIL line. The first run takes 30 to 60 s while it builds the precompiled headers. Later runs take a few seconds.
@@ -142,7 +143,7 @@ Delete `$env:TEMP\lc-setup-check` afterwards.
 Tell the user:
 1. Open the folder in Zed (`zed "<folder>"`).
 2. Create `leetcode-solves\two-sum.cpp`. The file name is the last part of the problem URL. Paste LeetCode's starter code and solve it.
-3. Press **Alt+F7** to test. The first run fetches the examples into `leetcode-solves\tests\two-sum.txt` and opens it.
+3. Press **Alt+F7** to test. The first run fetches the examples into `cases\two-sum\cases.txt` and opens it.
 4. Press **Alt+F8** to analyze: complexity, TLE risk, allocations.
 
 Point them to `README.md` for everything else.

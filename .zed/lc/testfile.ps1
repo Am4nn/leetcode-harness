@@ -1,4 +1,4 @@
-# Test file generation/parsing (tests/<slug>.txt) and cases-file writing.
+# Test file generation/parsing (cases/<slug>/cases.txt) and cases-file writing.
 # Function library: dot-source it (needs fetch.ps1 for ConvertFrom-LcHtml). No side effects.
 
 function Get-LcConstraints([string]$text) {

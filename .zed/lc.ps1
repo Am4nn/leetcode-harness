@@ -1,5 +1,5 @@
 # LeetCode harness for the file open in Zed (leetcode-solves/<slug>.cpp).
-#   -Mode test     run the cases in tests/<slug>.txt; the first run fetches the problem and writes that file
+#   -Mode test     run the cases in <dsa>/cases/<slug>/cases.txt; the first run fetches the problem and writes that file
 #   -Mode analyze  complexity estimate, TLE verdict and allocations from timed random inputs (bench), then
 #                  call counts and recursion depth (profile)
 [CmdletBinding(PositionalBinding = $false)]
@@ -7,9 +7,10 @@ param(
     [ValidateSet('test', 'analyze')][string]$Mode = 'test',
     [switch]$NoWait,      # exit without the closing prompt ("Press Enter to close" / "Note") (self-tests)
     [switch]$NoOpen,      # don't open a newly created test file in Zed
-    [switch]$Offline,     # never contact LeetCode; use the .meta cache only
+    [switch]$Offline,     # never contact LeetCode; use the cached problem data only
     [switch]$NoCommit,    # no auto-commit on solve
     [string]$JourneyRoot = '',   # event log, snapshots, journey.md (default <dsa>/journey)
+    [string]$CasesRoot = '',     # <slug>/cases.txt and <slug>/brute.cpp per problem (default <dsa>/cases)
     [int]$TimeoutMs = 30000,
     # The path may arrive split on spaces ("c++ language"), so take all remaining args.
     [Parameter(ValueFromRemainingArguments)][string[]]$Rest
@@ -25,6 +26,9 @@ param(
 $dsaRoot = Split-Path -Parent $PSScriptRoot
 if (-not $JourneyRoot) { $JourneyRoot = Join-Path $dsaRoot 'journey' }
 $JourneyRoot = [IO.Path]::GetFullPath($JourneyRoot)
+$problemsDir = Join-Path $JourneyRoot 'problems'  # cached LeetCode data: <slug>.json, <slug>.none
+if (-not $CasesRoot) { $CasesRoot = Join-Path $dsaRoot 'cases' }
+$CasesRoot = [IO.Path]::GetFullPath($CasesRoot)
 $utf8 = New-Object Text.UTF8Encoding $false
 $inv = [Globalization.CultureInfo]::InvariantCulture
 
@@ -80,11 +84,10 @@ function Complete-LcJourney([int]$code) {
         if ($note -and $note.Trim()) { Add-LcEvent 'note' @{ text = $note.Trim() } }
     }
     Update-LcJourney
-    $metaDir = Join-Path $testsDir '.meta'
     if ($solved -and -not $NoCommit) {
         $msg = "solve: $slug"
         if ($q -and $q.difficulty) { $msg += " ($($q.difficulty))" }
-        $paths = @($src, $testFile, (Join-Path $metaDir "$slug.json"), $JourneyRoot)
+        $paths = @($src, $caseDir, $JourneyRoot)  # the journey holds problems/<slug>.json
         $res = Invoke-LcSolveCommit -RepoDir (Split-Path -Parent $src) -Paths $paths -Message $msg
         if ($res -is [string]) {
             Write-Host "(not committed: $res)"
@@ -97,9 +100,8 @@ function Complete-LcJourney([int]$code) {
 
 # journey.md: this slug's row, or everything when events.jsonl was newer than journey.md (R31).
 function Update-LcJourney {
-    $metaDir = Join-Path $testsDir '.meta'
-    if ($script:jStale) { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $metaDir }
-    else { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $metaDir -Slug $slug -Events $script:events }
+    if ($script:jStale) { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $problemsDir }
+    else { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $problemsDir -Slug $slug -Events $script:events }
 }
 
 # A failed build: one line for a parameter type the harness can't handle, else g++'s output.
@@ -150,8 +152,9 @@ $src = (Resolve-Path -LiteralPath $src).ProviderPath
 if ([IO.Path]::GetExtension($src) -ne '.cpp') { Write-Host "Not a .cpp file: $src" -ForegroundColor Red; Exit-Lc 1 }
 
 $slug = [IO.Path]::GetFileNameWithoutExtension($src)
-$testsDir = Join-Path (Split-Path -Parent $src) 'tests'
-$testFile = Join-Path $testsDir "$slug.txt"
+# The harness's files live outside the solution's folder: cases/<slug>/, journey/problems/.
+$caseDir = Join-Path $CasesRoot $slug
+$testFile = Join-Path $caseDir 'cases.txt'
 $srcText = [IO.File]::ReadAllText($src)
 $srcHash = Get-LcSrcHash $src
 # Event "file": relative to the folder holding the journey (the dsa root by default), else the full path.
@@ -160,7 +163,7 @@ $relFile = $src.Replace('\', '/')
 if ($src.StartsWith($jBase, [StringComparison]::OrdinalIgnoreCase)) { $relFile = $src.Substring($jBase.Length).Replace('\', '/') }
 
 # ---- problem info: LeetCode metadata (cached), else the source ----
-$fetch = Get-LcCachedQuestion -TestsDir $testsDir -Slug $slug -Offline:$Offline
+$fetch = Get-LcCachedQuestion -ProblemsDir $problemsDir -Slug $slug -Offline:$Offline
 if ($fetch.Fetched) { Add-LcEvent 'fetch' (Get-LcFetchEventData $fetch.Question) }
 $q = $fetch.Question
 if ($q -and -not $q.metaData) { $q = $null }
@@ -185,7 +188,7 @@ if ($q) {
         Exit-Lc 1
     }
     if (-not (Test-Path -LiteralPath $testFile)) {
-        New-Item -ItemType Directory -Force $testsDir | Out-Null
+        New-Item -ItemType Directory -Force $caseDir | Out-Null
         [IO.File]::WriteAllText($testFile, (New-LcTestFileText -Question $q -Info $info) + "`n", $utf8)
         $zed = Join-Path $env:LOCALAPPDATA 'Programs\Zed\bin\zed.exe'
         if (-not $NoOpen -and (Test-Path -LiteralPath $zed)) { & $zed $testFile }
@@ -383,16 +386,16 @@ if ($Mode -eq 'analyze') {
             $data.calls[$k] = [ordered]@{ count = $p.Calls; depth = $p.Depth }
         }
     }
-    # Brute-force check: only when tests/<slug>.brute.cpp exists.
-    $bruteFile = Join-Path $testsDir "$slug.brute.cpp"
+    # Brute-force check: only when cases/<slug>/brute.cpp exists.
+    $bruteFile = Join-Path $caseDir 'brute.cpp'
     if (Test-Path -LiteralPath $bruteFile) {
         # A test file analyze can't read leaves the default (ordered compare).
         $anyOrder = $false
         try { $anyOrder = (Test-Path -LiteralPath $testFile) -and [bool](Read-LcTestFile -Path $testFile -Info $info).AnyOrder } catch {}
         $bc = Invoke-LcBruteCheck -SrcPath $src -BrutePath $bruteFile -Info $info -SpecPath $specPath -AnyOrder:$anyOrder -TimeoutMs $limitMs
         if ($bc.Errors) {
-            Write-LcLabeled 'brute' "$slug.brute.cpp doesn't build" 'Red'
-            Write-LcGppDiagnostics (Remove-LcUserTuLines $bc.Errors) $src
+            Write-LcLabeled 'brute' "cases/$slug/brute.cpp doesn't build" 'Red'
+            Write-LcGppDiagnostics (Remove-LcUserTuLines $bc.Errors) $bruteFile
         }
         elseif ($null -ne $bc.Crashed) {
             $how = if ($bc.TimedOut) { 'timed out' } else { 'crashed' }
@@ -550,7 +553,7 @@ if ($cases.Count -eq 0) {
         if ($names.Count -gt 0) {
             # Saved before running: a case that crashes or hangs is the one most worth keeping.
             $line = if ($info.Kind -eq 'design') { "Input`n" + ($vals -join "`n") } else { Format-LcInputLine -Info $info -Values $vals }
-            New-Item -ItemType Directory -Force $testsDir | Out-Null
+            New-Item -ItemType Directory -Force $caseDir | Out-Null
             $prefix = ''
             if (Test-Path -LiteralPath $testFile) {
                 $old = [IO.File]::ReadAllText($testFile)

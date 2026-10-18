@@ -8,6 +8,12 @@
     if (Test-Path -LiteralPath $tmp) { Remove-Item -Recurse -Force -LiteralPath $tmp }
     Copy-Item -Recurse (Join-Path $repo 'lc\selftest') $tmp
     $journey = Join-Path $tmp 'journey'
+    # The cached LeetCode data lives in the journey root (<journey>/problems), never next to a solution.
+    New-Item -ItemType Directory -Force $journey | Out-Null
+    Move-Item -LiteralPath (Join-Path $tmp 'problems') -Destination (Join-Path $journey 'problems')
+    # Test files and brute forces: <cases>/<slug>/cases.txt and brute.cpp. The O(n^2) two-sum variant has its own.
+    $cases = Join-Path $tmp 'cases'
+    $variantCases = Join-Path $tmp 'variant-cases'
     # The temp copy is a git repo, so the solve commit can be checked (all other runs pass -NoCommit).
     $git = (Get-Command git -ErrorAction Stop).Source
     & $git -C $tmp init -q 2>$null
@@ -31,15 +37,24 @@
     if (Test-Path -LiteralPath $userGch) { $userGchTime = (Get-Item -LiteralPath $userGch).LastWriteTimeUtc }
 
     # -Wait drops -NoWait (closing prompts read stdin); -Commit drops -NoCommit.
-    function Invoke-Lc([string]$File, [string[]]$Extra = @(), [string]$Stdin = '', [switch]$Wait, [switch]$Commit, [string]$Mode = 'test') {
-        $flags = @('-NoOpen', '-Offline')
+    # -Online drops -Offline (only for slugs already cached under $journey\problems: no network).
+    # -Cases: the cases root (default $cases).
+    function Invoke-Lc([string]$File, [string[]]$Extra = @(), [string]$Stdin = '', [switch]$Wait, [switch]$Commit, [string]$Mode = 'test', [switch]$Online, [string]$Cases = $cases) {
+        $flags = @('-NoOpen')
+        if (-not $Online) { $flags += '-Offline' }
         if (-not $Wait) { $flags += '-NoWait' }
         if (-not $Commit) { $flags += '-NoCommit' }
         $sw = [Diagnostics.Stopwatch]::StartNew()
-        $out = $Stdin | powershell -NoProfile -ExecutionPolicy Bypass -File $lcPs1 -Mode $Mode @flags -JourneyRoot $journey @Extra $File 2>&1 | Out-String
+        $out = $Stdin | powershell -NoProfile -ExecutionPolicy Bypass -File $lcPs1 -Mode $Mode @flags -JourneyRoot $journey -CasesRoot $Cases @Extra $File 2>&1 | Out-String
         $code = $LASTEXITCODE
         $sw.Stop()
         return @{ Out = $out; Code = $code; Ms = $sw.ElapsedMilliseconds }
+    }
+
+    function Write-Cases([string]$Slug, [string]$Text) {
+        $d = Join-Path $cases $Slug
+        New-Item -ItemType Directory -Force $d | Out-Null
+        [IO.File]::WriteAllText((Join-Path $d 'cases.txt'), $Text, $utf8)
     }
 
     try {
@@ -60,9 +75,9 @@
             Assert-Match $r.Out '\d+/\d+ passed'
             Assert-True ($r.Out -notmatch '(?m)^\s*FAIL\b') "e2e: $slug has FAIL lines`n$($r.Out)"
             Assert-True ($r.Out -notmatch '(?m)warning:|^warning ') "e2e: $slug printed warnings`n$($r.Out)"
-            $tf = Join-Path $tmp "tests\$slug.txt"
-            Assert-True (Test-Path -LiteralPath $tf) "e2e: tests/$slug.txt not created"
-            Assert-True ([IO.File]::ReadAllText($tf).StartsWith("# $($titles[$slug]) (#")) "e2e: tests/$slug.txt header"
+            $tf = Join-Path $cases "$slug\cases.txt"
+            Assert-True (Test-Path -LiteralPath $tf) "e2e: cases/$slug/cases.txt not created"
+            Assert-True ([IO.File]::ReadAllText($tf).StartsWith("# $($titles[$slug]) (#")) "e2e: cases/$slug/cases.txt header"
             if ($slug -eq 'two-sum') { $firstTwoSum = $r }
             Assert-True ($r.Out -notmatch 'Note \(') "e2e: $slug -NoWait prompted for a note`n$($r.Out)"
             if ($slug -eq 'concatenation-of-array') {
@@ -169,10 +184,7 @@
         }
 
         # e2e: method mismatch
-        $mm = Join-Path $tmp 'mismatch'
-        New-Item -ItemType Directory -Force (Join-Path $mm 'tests\.meta') | Out-Null
-        Copy-Item (Join-Path $repo 'leetcode-solves\concatenation-of-array.cpp') $mm
-        Copy-Item (Join-Path $tmp 'tests\.meta\concatenation-of-array.json') (Join-Path $mm 'tests\.meta')
+        $mm = Join-Path $tmp 'mismatch'  # the fixture is shuffle-the-array's code saved under another slug
         $r = Invoke-Lc (Join-Path $mm 'concatenation-of-array.cpp')
         Assert-True $r.Out.Contains("`n! LeetCode expects getConcatenation(nums), your Solution has shuffle(nums, n)") "e2e: method mismatch`n$($r.Out)"
         # Analyze: the label-column layout - header and mismatch, g++ warnings, results, one blank line between
@@ -220,12 +232,12 @@
         $r = Invoke-Lc (Join-Path $tmp 'my-scratch.cpp') -Stdin "7`n`n"
         Assert-Equal $r.Code 0 "e2e: partial typed input`n$($r.Out)"
         Assert-True ($r.Out -notmatch '----') "e2e: partial typed input ran a case`n$($r.Out)"
-        Assert-True (-not (Test-Path -LiteralPath (Join-Path $tmp 'tests\my-scratch.txt'))) 'e2e: partial typed input saved a case'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $cases 'my-scratch\cases.txt'))) 'e2e: partial typed input saved a case'
 
         # e2e: a cached "not a LeetCode problem" marker gives one short line on every run (no network);
         # R30: a typed run where no case ran writes no event and no snapshot
         $evCount = @(Read-LcEvents $journey).Count
-        $none = Join-Path $tmp 'tests\.meta\my-scratch.none'
+        $none = Join-Path $journey 'problems\my-scratch.none'
         [IO.File]::WriteAllText($none, '', $utf8)
         $r = Invoke-Lc (Join-Path $tmp 'my-scratch.cpp')
         Remove-Item -LiteralPath $none
@@ -240,12 +252,12 @@
             "class Solution {`npublic:`n    int at(int i) {`n        vector<int> v(2);`n        return v[i];`n    }`n};`n", $utf8)
         $r = Invoke-Lc (Join-Path $typed 'boom.cpp') -Stdin "5`n"
         Assert-Match $r.Out 'CRASH 1'
-        Assert-Match ([IO.File]::ReadAllText((Join-Path $typed 'tests\boom.txt'))) '(?m)^Input: i = 5\s*$'
+        Assert-Match ([IO.File]::ReadAllText((Join-Path $cases 'boom\cases.txt'))) '(?m)^Input: i = 5\s*$'
 
         # e2e: typed input
         $r = Invoke-Lc (Join-Path $tmp 'my-scratch.cpp') -Stdin "2`n3`n`n"
         Assert-True $r.Out.Contains('----  1  5') "e2e: typed input`n$($r.Out)"
-        Assert-Match ([IO.File]::ReadAllText((Join-Path $tmp 'tests\my-scratch.txt'))) '(?m)^Input: a = 2, b = 3\s*$'
+        Assert-Match ([IO.File]::ReadAllText((Join-Path $cases 'my-scratch\cases.txt'))) '(?m)^Input: a = 2, b = 3\s*$'
         $ev = @(Read-LcEvents $journey)
         Assert-Equal "$($ev[-2].event)|$($ev[-2].input)" 'typed_case|Input: a = 2, b = 3'
         Assert-Equal "$($ev[-1].event)|$($ev[-1].printed)|$(@($ev[-1].cases).Count)" 'test_run|1|1'
@@ -265,7 +277,7 @@
         [IO.File]::WriteAllText((Join-Path $tmp 'odd\aliases.cpp'), ("#define VI vector<int>`nusing ll = long long;`ntypedef vector<ll> vll;`n" +
             "class Solution {`npublic:`n    ll total(vll& a, VI& b) {`n        ll s = 0;`n        for (ll x : a) s += x;`n" +
             "        for (int x : b) s += x;`n        return s;`n    }`n};`n"), $utf8)
-        [IO.File]::WriteAllText((Join-Path $tmp 'odd\tests\aliases.txt'), "Input: a = [1,2,3], b = [4]`nOutput: 10`n", $utf8)
+        Write-Cases 'aliases' "Input: a = [1,2,3], b = [4]`nOutput: 10`n"
         $r = Invoke-Lc (Join-Path $tmp 'odd\aliases.cpp')
         Assert-Equal $r.Code 0 "e2e: aliases`n$($r.Out)"
         Assert-Match $r.Out '1/1 passed'
@@ -273,7 +285,7 @@
         # e2e: g++'s warnings for a solution that builds are printed above the results, as F7 does, also on a
         # rerun that skips the compile
         [IO.File]::WriteAllText((Join-Path $tmp 'odd\warn.cpp'), "class Solution {`npublic:`n    int same(int a) {`n        int unused = 0;`n        return a;`n    }`n};`n", $utf8)
-        [IO.File]::WriteAllText((Join-Path $tmp 'odd\tests\warn.txt'), "Input: a = 4`nOutput: 4`n", $utf8)
+        Write-Cases 'warn' "Input: a = 4`nOutput: 4`n"
         foreach ($k in 1, 2) {
             $r = Invoke-Lc (Join-Path $tmp 'odd\warn.cpp')
             Assert-Equal $r.Code 0 "e2e: warnings run $k`n$($r.Out)"
@@ -295,7 +307,7 @@
         Assert-True (-not $r.Out.Contains('Design problems')) 'e2e: private-only got the design message'
 
         # e2e: long values are truncated on ---- lines too
-        $tf = Join-Path $tmp 'tests\concatenation-of-array.txt'
+        $tf = Join-Path $cases 'concatenation-of-array\cases.txt'
         [IO.File]::AppendAllText($tf, "`nInput: nums = [$((1..40) -join ',')]`n", $utf8)
         $r = Invoke-Lc (Join-Path $tmp 'concatenation-of-array.cpp')
         Assert-Match $r.Out '(?m)^\s+----\s+3\s+\[1,2,3[0-9,]*\.\.\.\s'
@@ -338,10 +350,10 @@
         Assert-Equal ((& $git -C $tmp log -1 --format=%s) -join '') 'solve: two-sum (Easy)'
         Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '2'
         $files = @(& $git -C $tmp show --name-only --format= HEAD)
-        foreach ($p in 'two-sum.cpp', 'tests/two-sum.txt', 'journey/events.jsonl', 'journey/journey.md') {
+        foreach ($p in 'two-sum.cpp', 'cases/two-sum/cases.txt', 'journey/events.jsonl', 'journey/journey.md') {
             Assert-True ($files -contains $p) "e2e: solve commit lacks $p ($($files -join ', '))"
         }
-        Assert-True (-not ($files -match '^(tests/rotate-array\.txt|odd/)')) "e2e: solve commit took other files ($($files -join ', '))"
+        Assert-True (-not ($files -match '^(cases/rotate-array/|odd/)')) "e2e: solve commit took other files ($($files -join ', '))"
         Assert-Match ((& $git -C $tmp show HEAD:journey/events.jsonl) -join "`n") '"event":"note".*"text":"two pointers next"'
 
         # e2e: a failed solve commit prints one line and waits (Press Enter), instead of vanishing
@@ -357,8 +369,7 @@
 
         # e2e: method-name mismatch - all compared cases pass: note prompt and note, but no solved and no commit
         $mm2 = Join-Path $tmp 'mismatch2'
-        New-Item -ItemType Directory -Force (Join-Path $mm2 'tests\.meta') | Out-Null
-        Copy-Item (Join-Path $tmp 'tests\.meta\two-sum.json') (Join-Path $mm2 'tests\.meta')
+        New-Item -ItemType Directory -Force $mm2 | Out-Null
         [IO.File]::WriteAllText((Join-Path $mm2 'two-sum.cpp'), ([IO.File]::ReadAllText($twoSum) -replace '\btwoSum\(', 'pairSum('), $utf8)
         $r = Invoke-Lc (Join-Path $mm2 'two-sum.cpp') -Wait -Commit -Stdin "renamed it`n"
         Assert-Equal $r.Code 0 "e2e: mismatch run`n$($r.Out)"
@@ -372,7 +383,7 @@
 
         # e2e: analyze (Alt+F8). R6: the O(n^2) variant's own test file allows n up to 10^5.
         $evBefore = @(Read-LcEvents $journey | Where-Object { $_.event -eq 'analyze_run' }).Count
-        $r = Invoke-Lc (Join-Path $tmp 'variants\two-sum.cpp') -Mode analyze
+        $r = Invoke-Lc (Join-Path $tmp 'variants\two-sum.cpp') -Mode analyze -Cases $variantCases
         Assert-Equal $r.Code 0 "e2e: analyze variant exit code`n$($r.Out)"
         Assert-Match $r.Out 'looks O\(n\^2\)'
         Assert-Match $r.Out '(?m)^TLE      est\. .* at n = 100000 -> likely TLE\s*$'
@@ -390,8 +401,7 @@
         # R40: no Calls line when every function ran once; the event still has the counts
         $a = @(Read-LcEvents $journey | Where-Object { $_.event -eq 'analyze_run' })[-1]
         Assert-True ($a.calls.twoSum.count -eq 1 -and $a.calls.twoSum.depth -eq 1) "e2e: two-sum analyze_run calls $($a | ConvertTo-Json -Compress)"
-        # Task 13: a correct brute force next to the naive recursion agrees on every random case
-        Copy-Item (Join-Path $tmp 'bugged\tests\climbing-stairs.brute.cpp') (Join-Path $tmp 'tests')
+        # Task 13: a correct brute force (cases/climbing-stairs/brute.cpp) agrees with the naive recursion on every random case
         $r = Invoke-Lc (Join-Path $tmp 'climbing-stairs.cpp') -Mode analyze
         Assert-Match $r.Out '(?m)^brute    200 random cases agree\s*$'
         Assert-Match $r.Out '(?m)^growth   looks O\(2\^n\)'
@@ -472,15 +482,33 @@
         Assert-True ($a.event -eq 'analyze_run' -and @($a.PSObject.Properties.Name) -contains 'alloc' -and $null -eq $a.alloc) "e2e: analyze_run alloc null $($a | ConvertTo-Json -Compress)"
 
         # e2e: R16 - a grid's n is its cells, so the estimate is at len_max^2 = 40000 cells, not 200 rows
-        New-Item -ItemType Directory -Force (Join-Path $an 'tests') | Out-Null
         [IO.File]::WriteAllText((Join-Path $an 'grid-sum.cpp'), ("class Solution {`npublic:`n    long long gridSum(vector<vector<int>>& grid) {`n" +
             "        long long s = 0;`n        for (auto& row : grid) for (int v : row) s += v;`n        return s;`n    }`n};`n"), $utf8)
-        [IO.File]::WriteAllText((Join-Path $an 'tests\grid-sum.txt'), "Constraints:`n1 <= grid.length <= 200`n-100 <= grid[i][j] <= 100`n`nInput: grid = [[1,2],[3,4]]`nOutput: 10`n", $utf8)
+        Write-Cases 'grid-sum' "Constraints:`n1 <= grid.length <= 200`n-100 <= grid[i][j] <= 100`n`nInput: grid = [[1,2],[3,4]]`nOutput: 10`n"
         $r = Invoke-Lc (Join-Path $an 'grid-sum.cpp') -Mode analyze
         Assert-Equal $r.Code 0 "e2e: analyze grid exit code`n$($r.Out)"
         Assert-Match $r.Out '(?m)^TLE      est\. .* at n = 40000 -> '
         $ns = @(@(@(Read-LcEvents $journey)[-1].points) | ForEach-Object { [long]$_.n })
         Assert-True ($ns.Count -ge 3 -and ($ns | Measure-Object -Maximum).Maximum -gt 10000) "e2e: grid points are cells`n$($r.Out)"
+
+        # e2e: a fresh online-style run (no -Offline; the data is cached in the journey root), test then analyze,
+        # writes nothing in the solution's folder: the test file goes to <cases root>/<slug>/cases.txt
+        $fresh = Join-Path $tmp 'fresh'
+        $freshCases = Join-Path $tmp 'fresh-cases'
+        New-Item -ItemType Directory -Force $fresh | Out-Null
+        Copy-Item (Join-Path $tmp 'rotate-array.cpp') $fresh
+        $r = Invoke-Lc (Join-Path $fresh 'rotate-array.cpp') -Online -Cases $freshCases
+        Assert-Equal $r.Code 0 "e2e: fresh run exit code`n$($r.Out)"
+        Assert-Match $r.Out '(?m)^rotate-array  \(#189 Medium - '
+        $r = Invoke-Lc (Join-Path $fresh 'rotate-array.cpp') -Online -Cases $freshCases -Mode analyze
+        Assert-Equal $r.Code 0 "e2e: fresh analyze exit code`n$($r.Out)"
+        $left = @(Get-ChildItem -LiteralPath $fresh -Recurse -Force | ForEach-Object { $_.FullName.Substring($fresh.Length + 1) })
+        Assert-Equal ($left -join '|') 'rotate-array.cpp' 'e2e: a run wrote into the solution folder'
+        $made = @(Get-ChildItem -LiteralPath $freshCases -Recurse -Force -File | ForEach-Object { $_.FullName.Substring($freshCases.Length + 1) })
+        Assert-Equal ($made -join '|') 'rotate-array\cases.txt' 'e2e: fresh run cases root'
+        # No run above left a tests\ (or tests\.meta) folder next to any solution.
+        $stray = @(Get-ChildItem -LiteralPath $tmp -Recurse -Force -Directory | Where-Object { $_.Name -eq 'tests' -or $_.Name -eq '.meta' })
+        Assert-Equal $stray.Count 0 "e2e: runs made tests folders: $($stray.FullName -join ', ')"
 
         # e2e: the real dsa/journey was never written
         if ($null -eq $realEventsTime) { Assert-True (-not (Test-Path -LiteralPath $realEvents)) 'e2e: wrote the real journey' }
