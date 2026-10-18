@@ -110,7 +110,7 @@ Everything lands in `journey/`:
 
 Status is `accepted` once LeetCode has accepted a submission, `passed locally` when every local case passed, and `attempted` otherwise. To get `accepted`, put your LeetCode username (from `leetcode.com/u/<username>`) in `.zed/leetcode-user.txt`. The file is git-ignored, and each run then reads your public list of recent accepts, with no login. A run prints `LeetCode accepted: <slug>` when it finds a new one.
 
-When a problem passes for the first time, the solution, `cases/<slug>/` and `journey/` are committed automatically. Nothing is ever pushed.
+Every Alt+F7 run where all cases pass commits the solution, `cases/<slug>/` and `journey/`: `solve: <slug>` for a new version, `pass: <slug>` for a rerun. It then pushes in the background; if you're offline, the next push catches up.
 
 ## Speed
 

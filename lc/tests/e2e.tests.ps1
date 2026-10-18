@@ -38,6 +38,7 @@
     # LeetCode accepts: a username file and a response file stand in for .zed/leetcode-user.txt and the
     # network, so no run (not even -Online) contacts LeetCode. The default response lists nothing.
     $oldUserFile = $env:LC_USER_FILE; $oldAcResp = $env:LC_ACCEPTED_RESPONSE
+    $oldNoPush = $env:LC_NO_PUSH; $env:LC_NO_PUSH = '1'  # solve commits never push from tests
     $acDir = Join-Path $env:TEMP 'lc-e2e-accepted'
     New-Item -ItemType Directory -Force $acDir | Out-Null
     $env:LC_USER_FILE = Join-Path $acDir 'user.txt'
@@ -366,6 +367,12 @@
         Assert-True (-not ($files -match '^(cases/rotate-array/|odd/)')) "e2e: solve commit took other files ($($files -join ', '))"
         Assert-Match ((& $git -C $tmp show HEAD:journey/events.jsonl) -join "`n") '"event":"note".*"text":"two pointers next"'
 
+        # e2e: a rerun of the same, already-solved version that passes again is committed too, as "pass:"
+        $r = Invoke-Lc $twoSum -Wait -Commit -Stdin "`n"
+        Assert-True ($r.Out -notmatch 'not committed') "e2e: pass rerun output`n$($r.Out)"
+        Assert-Equal ((& $git -C $tmp log -1 --format=%s) -join '') 'pass: two-sum (Easy)'
+        Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '3'
+
         # e2e: a failed solve commit prints one line and waits (Press Enter), instead of vanishing
         $hook = Join-Path $tmp '.git\hooks\pre-commit'
         [IO.File]::WriteAllText($hook, "#!/bin/sh`necho 'hook says no' >&2`nexit 1`n")
@@ -375,7 +382,7 @@
         } finally { Remove-Item -LiteralPath $hook }
         Assert-Equal $r.Code 0 "e2e: failed commit exit code`n$($r.Out)"
         Assert-Match $r.Out '\(not committed: hook says no\)\s+Press Enter to close'
-        Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '2' 'e2e: blocked commit committed'
+        Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '3' 'e2e: blocked commit committed'
 
         # e2e: method-name mismatch - all compared cases pass: note prompt and note, but no solved and no commit
         $mm2 = Join-Path $tmp 'mismatch2'
@@ -389,7 +396,7 @@
         Assert-Equal (($mine | ForEach-Object { $_.event }) -join ',') 'test_run,note' 'e2e: mismatch events'
         Assert-True ($mine[0].mismatch -eq $true) "e2e: mismatch test_run $($mine[0] | ConvertTo-Json -Compress)"
         Assert-Equal $mine[1].text 'renamed it'
-        Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '2' 'e2e: mismatch run committed'
+        Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '3' 'e2e: mismatch run committed'
 
         # e2e: analyze (Alt+F8). R6: the O(n^2) variant's own test file allows n up to 10^5.
         $evBefore = @(Read-LcEvents $journey | Where-Object { $_.event -eq 'analyze_run' }).Count
@@ -438,7 +445,7 @@
         Assert-True ($a.alloc.count -gt 0 -and $a.alloc.bytes -gt 0 -and $null -ne $a.alloc.peak) "e2e: analyze_run alloc $($a | ConvertTo-Json -Compress)"
         # journey.md's Complexity comes from the latest analyze_run (the hash-map two-sum ran after the variant)
         Assert-Match ([IO.File]::ReadAllText((Join-Path $journey 'journey.md'))) '\[Two Sum\]\(https://leetcode\.com/problems/two-sum/\) \| passed locally \| Easy \| Array, Hash Table \| O\(n( log n)?\) \|'
-        Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '2' 'e2e: analyze committed'
+        Assert-Equal ((& $git -C $tmp rev-list --count HEAD) -join '') '3' 'e2e: analyze committed'
 
         # e2e: a fast O(n) solution (about 0.1 ms at n = 10^5) is timed in batches, so its few-microsecond
         # calls aren't noise: it looks O(n) every time, not O(log n) or O(1).
@@ -559,6 +566,7 @@
     } finally {
         $env:LC_BUILD_ROOT = $oldBuildRoot
         $env:LC_USER_FILE = $oldUserFile; $env:LC_ACCEPTED_RESPONSE = $oldAcResp
+        $env:LC_NO_PUSH = $oldNoPush
         Remove-Item -Recurse -Force -LiteralPath $acDir -ErrorAction SilentlyContinue
         Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
     }

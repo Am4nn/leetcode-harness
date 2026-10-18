@@ -246,6 +246,14 @@ function Get-LcGitReason($Output) {
 # Commits only the given paths (inside the repo holding RepoDir); never pushes. Prints nothing.
 # Returns $true when it committed, $false when there was nothing to commit, and the reason
 # (a string) when it could not commit: not a git repo, or git failed.
+# Pushes the repo that holds $RepoDir in a hidden, detached git process, so closing the task terminal
+# doesn't wait for the network. A failed push (offline, no remote) is silent; the next one catches up.
+# $env:LC_NO_PUSH (self-tests) turns it off.
+function Start-LcPush([string]$RepoDir) {
+    if ($env:LC_NO_PUSH) { return }
+    try { Start-Process -FilePath 'git' -ArgumentList '-C', "`"$RepoDir`"", 'push', '-q' -WindowStyle Hidden | Out-Null } catch {}
+}
+
 function Invoke-LcSolveCommit([string]$RepoDir, [string[]]$Paths, [string]$Message) {
     $old = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'

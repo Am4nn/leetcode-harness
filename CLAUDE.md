@@ -18,12 +18,26 @@ I practice LeetCode in C++ here. Use my files to answer questions about my solut
   3. an outline of the approach.
 - Give the full solution only when I ask for it. Then give the code, explain why it works, its time and space complexity, and the one key idea in a sentence.
 
-**A review of my solution:**
-- Start with the verdict: correct or not.
-- If it's wrong, give the smallest input that breaks it, the expected output and what my code returns.
-- Compare its complexity with the best known approach. If mine is worse, name the better approach.
-- Suggest at most two concrete improvements.
-- Name the pattern, and list 2-3 related problems I haven't solved (check `journey/`).
+**A review of my solution.** Use these sections in this order, with 1-3 short bullets each:
+```
+Score: N/10  <one-word label: Poor | Fair | Good | Great>
+
+1. Correctness     correct or wrong, with evidence. If wrong: smallest failing input, expected
+                   output, what mine returns, and the line at fault.
+2. Complexity      mine (time / space) against the best known. Name the better approach if mine is worse.
+3. Code quality    at most 3 concrete points, most important first, each with its line number.
+4. Edge cases      only the ones that apply to this problem's constraints, and whether mine handles each.
+5. Key fix         the one change that matters most, with only the changed lines of code.
+                   Write "none needed" if there isn't one.
+Pattern: <name>.  Related: <2-3 problems with the same pattern that aren't in journey/, easiest first>
+```
+- **Before calling something a bug, prove it.** Run my code on the input you think breaks it (see "Check before claiming"). Also check whether `journey/` shows the problem as accepted. If you can't make it fail, it isn't a bug; at most it's a code-quality point.
+- **Score from evidence:**
+  - Proven wrong: 1-4.
+  - Correct but slower than the best known: 5-7.
+  - Correct and optimal: 8-10, minus points only for real code-quality issues.
+  - Never score below 5 for something LeetCode accepted.
+- Merge points that share a cause. Leave out pure style nits.
 
 **Patterns and progress:** answer from my data in `journey/`: tags, attempts, notes, what I avoid. Don't answer from general advice.
 
@@ -38,5 +52,6 @@ I practice LeetCode in C++ here. Use my files to answer questions about my solut
 - No praise, celebration or excitement. No "great question", no emoji, no exclamation marks.
 - No filler: "it's worth noting", "let's dive in", "at its core", "here's the thing", "the key insight is" as a setup line.
 - No "not X, but Y" framing. Say what is true.
-- No recap at the end. Stop after the last useful point.
+- No recap at the end and no unasked "next step" suggestions. Stop after the last useful point.
+- Before sending, check the answer against these rules and cut whatever breaks them.
 - Use bullets only for real lists. Show only the code that matters, in LeetCode-style C++.

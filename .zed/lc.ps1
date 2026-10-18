@@ -91,7 +91,8 @@ function Add-LcRunCases($run, [int]$FirstN = 1) {
 }
 
 # Writes test_run (+ solved), the snapshot and journey.md; asks for a note after an all-pass run;
-# commits a solve. A failed commit prints one line and waits, so it can be read before the task hides.
+# commits every all-pass run ("solve:" for a new version, "pass:" for a rerun) and pushes in the
+# background. A failed commit prints one line and waits, so it can be read before the task hides.
 function Complete-LcJourney([int]$code) {
     $r = $script:jRun
     $cases = @($r.Cases.ToArray())
@@ -117,15 +118,16 @@ function Complete-LcJourney([int]$code) {
         if ($note -and $note.Trim()) { Add-LcEvent 'note' @{ text = $note.Trim() } }
     }
     Update-LcJourney
-    if ($solved -and -not $NoCommit) {
-        $msg = "solve: $slug"
+    if ($r.AllPass -and -not $mismatch -and -not $NoCommit) {
+        $msg = if ($solved) { "solve: $slug" } else { "pass: $slug" }
         if ($q -and $q.difficulty) { $msg += " ($($q.difficulty))" }
         $paths = @($src, $caseDir, $JourneyRoot)  # the journey holds problems/<slug>.json
-        $res = Invoke-LcSolveCommit -RepoDir (Split-Path -Parent $src) -Paths $paths -Message $msg
+        $repoDir = Split-Path -Parent $src
+        $res = Invoke-LcSolveCommit -RepoDir $repoDir -Paths $paths -Message $msg
         if ($res -is [string]) {
             Write-Host "(not committed: $res)"
             if (-not $NoWait) { Finish $code }
-        }
+        } else { Start-LcPush $repoDir }
     }
     if ($r.AllPass -or $NoWait) { exit $code }
     Finish $code
