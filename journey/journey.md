@@ -4,4 +4,4 @@
 | 2026-10-18 | 169 | [Majority Element](https://leetcode.com/problems/majority-element/) | accepted | Easy | Array, Hash Table, Divide and Conquer, Sorting, Counting, Boyer–Moore Majority Vote Algorithm | O(n) | 0.01 ms | 1 | Boyer Moore Voting Algorithm |
 | 2026-10-18 | 238 | [Product of Array Except Self](https://leetcode.com/problems/product-of-array-except-self/) | accepted | Medium | Array, Prefix Sum | O(n log n) | 0.01 ms | 2 | Need to remember prefix suffix sum array pattern |
 | 2026-10-18 | 122 | [Best Time to Buy and Sell Stock II](https://leetcode.com/problems/best-time-to-buy-and-sell-stock-ii/) | accepted | Medium | Array, Dynamic Programming, Greedy | O(n) | 0.01 ms | 1 |  |
-| 2026-10-18 | 41 | [First Missing Positive](https://leetcode.com/problems/first-missing-positive/) | passed locally | Hard | Array, Hash Table |  | 0.01 ms | 2 |  |
+| 2026-10-18 | 41 | [First Missing Positive](https://leetcode.com/problems/first-missing-positive/) | accepted | Hard | Array, Hash Table | O(n log n) | 0.01 ms | 2 | Tough - cyclic placement logic |
