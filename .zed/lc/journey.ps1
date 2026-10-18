@@ -164,7 +164,7 @@ function Format-LcJourneyRow([string]$Slug, $State, [string]$MetaDir) {
 # -Slug: only that slug's events changed, so only its row is rebuilt (in place, or appended when new);
 # -Events then needs only that slug's events. With no usable journey.md yet, it regenerates everything.
 function Update-LcJourneyFile([string]$Root, [string]$MetaDir = '', $Events = $null, [string]$Slug = '') {
-    if (-not $MetaDir) { $MetaDir = Join-Path (Split-Path -Parent $Root) 'leetcode-solves\tests\.meta' }
+    if (-not $MetaDir) { $MetaDir = Join-Path $Root 'problems' }
     $header = @('| Date | # | Problem | Difficulty | Tags | Complexity | Max time | Attempts | Note |',
                 '|---|---|---|---|---|---|---|---|---|')
     $md = Join-Path $Root 'journey.md'

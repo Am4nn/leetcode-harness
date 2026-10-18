@@ -8,6 +8,9 @@
     if (Test-Path -LiteralPath $tmp) { Remove-Item -Recurse -Force -LiteralPath $tmp }
     Copy-Item -Recurse (Join-Path $repo 'lc\selftest') $tmp
     $journey = Join-Path $tmp 'journey'
+    # The cached LeetCode data lives in the journey root (<journey>/problems), never next to a solution.
+    New-Item -ItemType Directory -Force $journey | Out-Null
+    Move-Item -LiteralPath (Join-Path $tmp 'problems') -Destination (Join-Path $journey 'problems')
     # The temp copy is a git repo, so the solve commit can be checked (all other runs pass -NoCommit).
     $git = (Get-Command git -ErrorAction Stop).Source
     & $git -C $tmp init -q 2>$null
@@ -31,8 +34,10 @@
     if (Test-Path -LiteralPath $userGch) { $userGchTime = (Get-Item -LiteralPath $userGch).LastWriteTimeUtc }
 
     # -Wait drops -NoWait (closing prompts read stdin); -Commit drops -NoCommit.
-    function Invoke-Lc([string]$File, [string[]]$Extra = @(), [string]$Stdin = '', [switch]$Wait, [switch]$Commit, [string]$Mode = 'test') {
-        $flags = @('-NoOpen', '-Offline')
+    # -Online drops -Offline (only for slugs already cached under $journey\problems: no network).
+    function Invoke-Lc([string]$File, [string[]]$Extra = @(), [string]$Stdin = '', [switch]$Wait, [switch]$Commit, [string]$Mode = 'test', [switch]$Online) {
+        $flags = @('-NoOpen')
+        if (-not $Online) { $flags += '-Offline' }
         if (-not $Wait) { $flags += '-NoWait' }
         if (-not $Commit) { $flags += '-NoCommit' }
         $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -170,9 +175,8 @@
 
         # e2e: method mismatch
         $mm = Join-Path $tmp 'mismatch'
-        New-Item -ItemType Directory -Force (Join-Path $mm 'tests\.meta') | Out-Null
+        New-Item -ItemType Directory -Force $mm | Out-Null
         Copy-Item (Join-Path $repo 'leetcode-solves\concatenation-of-array.cpp') $mm
-        Copy-Item (Join-Path $tmp 'tests\.meta\concatenation-of-array.json') (Join-Path $mm 'tests\.meta')
         $r = Invoke-Lc (Join-Path $mm 'concatenation-of-array.cpp')
         Assert-True $r.Out.Contains('LeetCode expects getConcatenation(nums) but your Solution has shuffle(nums, n)') "e2e: method mismatch`n$($r.Out)"
 
@@ -204,7 +208,7 @@
         # e2e: a cached "not a LeetCode problem" marker gives one short line on every run (no network);
         # R30: a typed run where no case ran writes no event and no snapshot
         $evCount = @(Read-LcEvents $journey).Count
-        $none = Join-Path $tmp 'tests\.meta\my-scratch.none'
+        $none = Join-Path $journey 'problems\my-scratch.none'
         [IO.File]::WriteAllText($none, '', $utf8)
         $r = Invoke-Lc (Join-Path $tmp 'my-scratch.cpp')
         Remove-Item -LiteralPath $none
@@ -335,8 +339,7 @@
 
         # e2e: method-name mismatch - all compared cases pass: note prompt and note, but no solved and no commit
         $mm2 = Join-Path $tmp 'mismatch2'
-        New-Item -ItemType Directory -Force (Join-Path $mm2 'tests\.meta') | Out-Null
-        Copy-Item (Join-Path $tmp 'tests\.meta\two-sum.json') (Join-Path $mm2 'tests\.meta')
+        New-Item -ItemType Directory -Force $mm2 | Out-Null
         [IO.File]::WriteAllText((Join-Path $mm2 'two-sum.cpp'), ([IO.File]::ReadAllText($twoSum) -replace '\btwoSum\(', 'pairSum('), $utf8)
         $r = Invoke-Lc (Join-Path $mm2 'two-sum.cpp') -Wait -Commit -Stdin "renamed it`n"
         Assert-Equal $r.Code 0 "e2e: mismatch run`n$($r.Out)"
@@ -446,6 +449,18 @@
         Assert-Match $r.Out '(?m)^At n = 40000: est\. '
         $ns = @([regex]::Matches($r.Out, 'n=(\d+) ') | ForEach-Object { [long]$_.Groups[1].Value })
         Assert-True ($ns.Count -ge 3 -and ($ns | Measure-Object -Maximum).Maximum -gt 10000) "e2e: grid points are cells`n$($r.Out)"
+
+        # e2e: a fresh online-style run (no -Offline; the data is cached in the journey root) writes nothing
+        # in the solution folder except tests/<slug>.txt
+        $fresh = Join-Path $tmp 'fresh'
+        New-Item -ItemType Directory -Force $fresh | Out-Null
+        Copy-Item (Join-Path $tmp 'rotate-array.cpp') $fresh
+        $r = Invoke-Lc (Join-Path $fresh 'rotate-array.cpp') -Online
+        Assert-Equal $r.Code 0 "e2e: fresh run exit code`n$($r.Out)"
+        Assert-Match $r.Out '(?m)^rotate-array  \(#189 Medium - '
+        $left = @(Get-ChildItem -LiteralPath $fresh -Recurse -Force | ForEach-Object { $_.FullName.Substring($fresh.Length + 1) } | Sort-Object)
+        Assert-Equal ($left -join '|') 'rotate-array.cpp|tests|tests\rotate-array.txt' 'e2e: fresh run wrote into the solution folder'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $tmp 'tests\.meta'))) 'e2e: a run wrote tests\.meta'
 
         # e2e: the real dsa/journey was never written
         if ($null -eq $realEventsTime) { Assert-True (-not (Test-Path -LiteralPath $realEvents)) 'e2e: wrote the real journey' }

@@ -122,7 +122,15 @@
         $mdir = Join-Path $tmp 'meta'; New-Item -ItemType Directory $mdir | Out-Null
         [IO.File]::WriteAllText((Join-Path $mdir 'two-sum.json'), '{"questionFrontendId":"1","title":"Two Sum","difficulty":"Easy","topicTags":[{"name":"Array"},{"name":"Hash Table"}]}')
         Update-LcJourneyFile -Root $jr -MetaDir $mdir
-        Assert-Equal ([IO.File]::ReadAllLines((Join-Path $jr 'journey.md')))[3] '| - | 1 | [Two Sum](https://leetcode.com/problems/two-sum/) | Easy | Array, Hash Table |  |  | 1 | a \| b |'
+        $cachedRow = '| - | 1 | [Two Sum](https://leetcode.com/problems/two-sum/) | Easy | Array, Hash Table |  |  | 1 | a \| b |'
+        Assert-Equal ([IO.File]::ReadAllLines((Join-Path $jr 'journey.md')))[3] $cachedRow
+        # Without -MetaDir the cache is <Root>/problems.
+        Update-LcJourneyFile -Root $jr
+        Assert-Equal ([IO.File]::ReadAllLines((Join-Path $jr 'journey.md')))[3] $inc[3] 'journey: no problems dir, no cached row'
+        New-Item -ItemType Directory (Join-Path $jr 'problems') | Out-Null
+        Copy-Item (Join-Path $mdir 'two-sum.json') (Join-Path $jr 'problems')
+        Update-LcJourneyFile -Root $jr
+        Assert-Equal ([IO.File]::ReadAllLines((Join-Path $jr 'journey.md')))[3] $cachedRow 'journey: default MetaDir is <Root>/problems'
 
         # solve commit (temp repo only)
         $git = (Get-Command git -ErrorAction Stop).Source

@@ -7,7 +7,7 @@ param(
     [ValidateSet('test', 'analyze')][string]$Mode = 'test',
     [switch]$NoWait,      # exit without the closing prompt ("Press Enter to close" / "Note") (self-tests)
     [switch]$NoOpen,      # don't open a newly created test file in Zed
-    [switch]$Offline,     # never contact LeetCode; use the .meta cache only
+    [switch]$Offline,     # never contact LeetCode; use the cached problem data only
     [switch]$NoCommit,    # no auto-commit on solve
     [string]$JourneyRoot = '',   # event log, snapshots, journey.md (default <dsa>/journey)
     [int]$TimeoutMs = 30000,
@@ -25,6 +25,7 @@ param(
 $dsaRoot = Split-Path -Parent $PSScriptRoot
 if (-not $JourneyRoot) { $JourneyRoot = Join-Path $dsaRoot 'journey' }
 $JourneyRoot = [IO.Path]::GetFullPath($JourneyRoot)
+$problemsDir = Join-Path $JourneyRoot 'problems'  # cached LeetCode data: <slug>.json, <slug>.none
 $utf8 = New-Object Text.UTF8Encoding $false
 $inv = [Globalization.CultureInfo]::InvariantCulture
 
@@ -80,11 +81,10 @@ function Complete-LcJourney([int]$code) {
         if ($note -and $note.Trim()) { Add-LcEvent 'note' @{ text = $note.Trim() } }
     }
     Update-LcJourney
-    $metaDir = Join-Path $testsDir '.meta'
     if ($solved -and -not $NoCommit) {
         $msg = "solve: $slug"
         if ($q -and $q.difficulty) { $msg += " ($($q.difficulty))" }
-        $paths = @($src, $testFile, (Join-Path $metaDir "$slug.json"), $JourneyRoot)
+        $paths = @($src, $testFile, $JourneyRoot)  # the journey holds problems/<slug>.json
         $res = Invoke-LcSolveCommit -RepoDir (Split-Path -Parent $src) -Paths $paths -Message $msg
         if ($res -is [string]) {
             Write-Host "(not committed: $res)"
@@ -97,9 +97,8 @@ function Complete-LcJourney([int]$code) {
 
 # journey.md: this slug's row, or everything when events.jsonl was newer than journey.md (R31).
 function Update-LcJourney {
-    $metaDir = Join-Path $testsDir '.meta'
-    if ($script:jStale) { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $metaDir }
-    else { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $metaDir -Slug $slug -Events $script:events }
+    if ($script:jStale) { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $problemsDir }
+    else { Update-LcJourneyFile -Root $JourneyRoot -MetaDir $problemsDir -Slug $slug -Events $script:events }
 }
 
 # A failed build: one line for a parameter type the harness can't handle, else g++'s output.
@@ -148,7 +147,7 @@ $relFile = $src.Replace('\', '/')
 if ($src.StartsWith($jBase, [StringComparison]::OrdinalIgnoreCase)) { $relFile = $src.Substring($jBase.Length).Replace('\', '/') }
 
 # ---- problem info: LeetCode metadata (cached), else the source ----
-$fetch = Get-LcCachedQuestion -TestsDir $testsDir -Slug $slug -Offline:$Offline
+$fetch = Get-LcCachedQuestion -ProblemsDir $problemsDir -Slug $slug -Offline:$Offline
 if ($fetch.Fetched) { Add-LcEvent 'fetch' (Get-LcFetchEventData $fetch.Question) }
 $q = $fetch.Question
 if ($q -and -not $q.metaData) { $q = $null }

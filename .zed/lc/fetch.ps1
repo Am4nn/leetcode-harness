@@ -30,11 +30,12 @@ function Get-LcQuestion([string]$Slug) {
 }
 
 # Returns @{ Question; Fetched; Tried; NotProblem }. Tried: LeetCode was contacted on this call.
-# A definite "no such problem" is remembered in .meta/<slug>.none so later runs skip the fetch;
+# The cache lives in $ProblemsDir (<JourneyRoot>/problems), never next to the solution: <slug>.json.
+# A definite "no such problem" is remembered in <slug>.none so later runs skip the fetch;
 # NotProblem is true when that marker exists (also offline) or this call just wrote it.
-function Get-LcCachedQuestion([string]$TestsDir, [string]$Slug, [switch]$Offline) {
-    $meta = Join-Path (Join-Path $TestsDir '.meta') "$Slug.json"
-    $none = Join-Path (Join-Path $TestsDir '.meta') "$Slug.none"
+function Get-LcCachedQuestion([string]$ProblemsDir, [string]$Slug, [switch]$Offline) {
+    $meta = Join-Path $ProblemsDir "$Slug.json"
+    $none = Join-Path $ProblemsDir "$Slug.none"
     if (Test-Path -LiteralPath $meta) {
         $q = [IO.File]::ReadAllText($meta, [Text.Encoding]::UTF8) | ConvertFrom-Json
         return @{ Question = $q; Fetched = $false; Tried = $false; NotProblem = $false }
