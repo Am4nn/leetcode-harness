@@ -1,23 +1,23 @@
 class Solution {
 public:
   vector<int> productExceptSelf(vector<int> &nums) {
-    size_t numSize = nums.size();
+    int numSize = (int)nums.size();
     vector<int> prefixProduct(numSize), suffixProduct(numSize),
         productArray(numSize);
 
     int runningMultiplication = 1;
-    for (size_t i = 0; i < numSize; ++i) {
+    for (int i = 0; i < numSize; ++i) {
       prefixProduct[i] = runningMultiplication;
       runningMultiplication *= nums[i];
     }
 
     runningMultiplication = 1;
-    for (size_t i = numSize - 1; i >= 0; --i) {
+    for (int i = numSize - 1; i >= 0; --i) {
       suffixProduct[i] = runningMultiplication;
       runningMultiplication *= nums[i];
     }
 
-    for (size_t i = 0; i < numSize; ++i) {
+    for (int i = 0; i < numSize; ++i) {
       productArray[i] = prefixProduct[i] * suffixProduct[i];
     }
 
