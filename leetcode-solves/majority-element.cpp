@@ -2,7 +2,7 @@ class Solution {
 public:
   int majorityElement(vector<int> &nums) {
     unordered_map<int, int> counter;
-    pair<int, int> majorityElement; // element, counter
+    pair<int, int> majorityElement = {-1, -1}; // element, counter
 
     for (int element : nums) {
       ++counter[element];
