@@ -1,0 +1,21 @@
+{
+    "questionFrontendId":  "238",
+    "title":  "Product of Array Except Self",
+    "titleSlug":  "product-of-array-except-self",
+    "difficulty":  "Medium",
+    "isPaidOnly":  false,
+    "topicTags":  [
+                      {
+                          "name":  "Array"
+                      },
+                      {
+                          "name":  "Prefix Sum"
+                      }
+                  ],
+    "metaData":  "{\r\n  \"name\": \"productExceptSelf\",\r\n  \"params\": [\r\n    {\r\n      \"name\": \"nums\",\r\n      \"type\": \"integer[]\"\r\n    }\r\n  ],\r\n  \"return\": {\r\n    \"type\": \"integer[]\"\r\n  }\r\n}",
+    "exampleTestcaseList":  [
+                                "[1,2,3,4]",
+                                "[-1,1,0,-3,3]"
+                            ],
+    "content":  "\u003cp\u003eGiven an integer array \u003ccode\u003enums\u003c/code\u003e, return \u003cem\u003ean array\u003c/em\u003e \u003ccode\u003eanswer\u003c/code\u003e \u003cem\u003esuch that\u003c/em\u003e \u003ccode\u003eanswer[i]\u003c/code\u003e \u003cem\u003eis equal to the product of all the elements of\u003c/em\u003e \u003ccode\u003enums\u003c/code\u003e \u003cem\u003eexcept\u003c/em\u003e \u003ccode\u003enums[i]\u003c/code\u003e.\u003c/p\u003e\n\n\u003cp\u003eThe product of any prefix or suffix of \u003ccode\u003enums\u003c/code\u003e is \u003cstrong\u003eguaranteed\u003c/strong\u003e to fit in a \u003cstrong\u003e32-bit\u003c/strong\u003e integer.\u003c/p\u003e\n\n\u003cp\u003eYou must write an algorithm that runs in\u0026nbsp;\u003ccode\u003eO(n)\u003c/code\u003e\u0026nbsp;time and without using the division operation.\u003c/p\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 1:\u003c/strong\u003e\u003c/p\u003e\n\u003cpre\u003e\u003cstrong\u003eInput:\u003c/strong\u003e nums = [1,2,3,4]\n\u003cstrong\u003eOutput:\u003c/strong\u003e [24,12,8,6]\n\u003c/pre\u003e\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 2:\u003c/strong\u003e\u003c/p\u003e\n\u003cpre\u003e\u003cstrong\u003eInput:\u003c/strong\u003e nums = [-1,1,0,-3,3]\n\u003cstrong\u003eOutput:\u003c/strong\u003e [0,0,9,0,0]\n\u003c/pre\u003e\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong\u003eConstraints:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cul\u003e\n\t\u003cli\u003e\u003ccode\u003e2 \u0026lt;= nums.length \u0026lt;= 10\u003csup\u003e5\u003c/sup\u003e\u003c/code\u003e\u003c/li\u003e\n\t\u003cli\u003e\u003ccode\u003e-30 \u0026lt;= nums[i] \u0026lt;= 30\u003c/code\u003e\u003c/li\u003e\n\t\u003cli\u003eThe input is generated such that \u003ccode\u003eanswer[i]\u003c/code\u003e is \u003cstrong\u003eguaranteed\u003c/strong\u003e to fit in a \u003cstrong\u003e32-bit\u003c/strong\u003e integer.\u003c/li\u003e\n\u003c/ul\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong\u003eFollow up:\u003c/strong\u003e\u0026nbsp;Can you solve the problem in \u003ccode\u003eO(1)\u003c/code\u003e\u0026nbsp;extra\u0026nbsp;space complexity? (The output array \u003cstrong\u003edoes not\u003c/strong\u003e count as extra space for space complexity analysis.)\u003c/p\u003e\n"
+}
