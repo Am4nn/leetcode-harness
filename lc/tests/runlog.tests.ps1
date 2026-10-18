@@ -208,6 +208,14 @@
         Assert-Match $text 'twice=42'
         Assert-Match $text 'finished: exit code 0'
 
+        # A big input.txt read by a program that prints as it reads: stdin is copied while stdout is pumped
+        [IO.File]::WriteAllText($progSrc, "#include <cstdio>`nint main() { int x; long long s = 0; while (scanf(`"%d`", &x) == 1) { printf(`"%d\n`", 2 * x); s += x; } printf(`"sum=%lld\n`", s); }`n", $utf8)
+        [IO.File]::WriteAllText((Join-Path $prog 'input.txt'), ((1..20000) -join "`n") + "`n", $utf8)
+        $r = Invoke-PsTimed @($runCpp, '-Mode', 'input', '-LogRun', $progSrc) 60000
+        Assert-True (-not $r.TimedOut) 'runlog: Shift+F7 with a big input.txt hung'
+        Assert-Match $r.Out 'sum=200010000'
+        Assert-Match ([IO.File]::ReadAllText((Get-Logs)[-1].FullName)) '(?m)^40000\r?\nsum=200010000'
+
         # Ctrl+F7: g++ errors are logged
         [IO.File]::WriteAllText($progSrc, "int main() { return undefined_name; }`n", $utf8)
         $null = '' | powershell -NoProfile -ExecutionPolicy Bypass -File $runCpp -Mode check -LogRun $progSrc 2>&1 | Out-String

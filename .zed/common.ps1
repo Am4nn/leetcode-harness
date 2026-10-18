@@ -74,15 +74,18 @@ function Start-Measured {
         )
         foreach ($q in $pumps) { $q.Buf = New-Object byte[] 65536; $q.Task = $q.From.ReadAsync($q.Buf, 0, $q.Buf.Length) }
     }
+    # Copied in the background: a program that prints while it reads blocks on a full stdout pipe until the
+    # loop below drains it, so a copy that waits for the program to read everything first never finishes.
+    $stdin = $null
     if ($StdinFile) {
         $fs = [IO.File]::OpenRead($StdinFile)
-        try { $fs.CopyTo($p.StandardInput.BaseStream) } catch {}  # the program may exit before reading it all
-        finally { $fs.Dispose(); try { $p.StandardInput.Close() } catch {} }
+        $stdin = @{ File = $fs; Task = $fs.CopyToAsync($p.StandardInput.BaseStream) }
     }
     $peak = 0
     $timedOut = $false
     $sw = [Diagnostics.Stopwatch]::StartNew()
     while (-not $p.HasExited) {
+        if ($stdin -and $stdin.Task.IsCompleted) { Close-LcStdin $p $stdin; $stdin = $null }  # end of input
         try { $p.Refresh(); $peak = [Math]::Max($peak, $p.PeakWorkingSet64) } catch {}
         if ($TimeoutMs -gt 0 -and $sw.ElapsedMilliseconds -ge $TimeoutMs) {
             $timedOut = $true
@@ -93,6 +96,7 @@ function Start-Measured {
         Copy-LcPumped $pumps $TeeTo
         Start-Sleep -Milliseconds 10
     }
+    if ($stdin) { Close-LcStdin $p $stdin }  # the program exited (or was killed) before reading it all
     $p.WaitForExit()
     Copy-LcPumped $pumps $TeeTo -Drain
     $code = $null
@@ -101,6 +105,14 @@ function Start-Measured {
     try { $cpuMs = [int]$p.TotalProcessorTime.TotalMilliseconds } catch {}
     $p.Dispose()
     @{ Code = $code; CpuMs = $cpuMs; PeakBytes = $peak; TimedOut = $timedOut }
+}
+
+# Start-Measured -StdinFile: closes the program's stdin (it sees end of input) and the file. Closing the pipe
+# first also ends a copy still writing to a program that has exited.
+function Close-LcStdin($P, $Stdin) {
+    try { $P.StandardInput.Close() } catch {}  # broken pipe: the program exited before reading it all
+    try { [void]$Stdin.Task.Wait(1000) } catch {}
+    $Stdin.File.Dispose()
 }
 
 # Start-Measured -TeeTo: copies what each pipe has read so far to the terminal and the log, then reads on.
