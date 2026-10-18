@@ -169,31 +169,73 @@ function Get-LcComplexityShape([string]$label, [double]$n) {
     throw "unknown complexity label: $label"
 }
 
+# Returns @{ Label; Coef; TooFast; TooFew }. TooFast: no fit (Label 'too fast to measure', or 'too few sizes
+# to tell' with TooFew when bench ran fewer than 3 sizes, as a small maxN gives, and they took real time).
 function Get-LcComplexity {
     param($Points)
     # Noise floor: 0.05 us. Calls under 1 ms are timed in batches of ~1 ms (lc-run.h), so per-call
     # times well below one 100 ns timer tick are still real; only near-empty calls are dropped.
-    $pts = @(@($Points) | Where-Object { $_.ms -ge 0.00005 })
-    if ($pts.Count -lt 3) { return [pscustomobject]@{ Label = 'too fast to measure'; Coef = 0.0; TooFast = $true } }
-    $maxN = ($pts | ForEach-Object { [double]$_.n } | Measure-Object -Maximum).Maximum
+    $all = @($Points)
+    $pts = @()
+    foreach ($p in @($all | Where-Object { $_.ms -ge 0.00005 } | Sort-Object { [double]$_.n })) {
+        if (-not $pts.Count -or [double]$p.n -gt [double]$pts[-1].n) { $pts += $p }
+    }
+    if ($pts.Count -lt 3) {
+        $few = $all.Count -lt 3 -and $pts.Count -gt 0
+        $label = if ($few) { 'too few sizes to tell' } else { 'too fast to measure' }
+        return [pscustomobject]@{ Label = $label; Coef = 0.0; TooFast = $true; TooFew = $few }
+    }
     $labels = @('O(1)', 'O(log n)', 'O(n)', 'O(n log n)', 'O(n^2)', 'O(n^3)')
-    if ($maxN -le 64) { $labels += 'O(2^n)' }
-    $top = $pts | Sort-Object { [double]$_.n } | Select-Object -Last 1
-    $best = $null
+    if ([double]$pts[-1].n -le 64) { $labels += 'O(2^n)' }
+    # Fitted on the steps between neighbouring sizes: log2 of each time ratio against the label's own. A cache
+    # step (the data outgrowing L1 or L2) then costs one step's error instead of bending the whole line, and
+    # absolute (not squared) errors keep that one step from deciding the label.
+    $m = $pts.Count - 1
+    $dt = @(for ($i = 1; $i -le $m; $i++) { [math]::Log([double]$pts[$i].ms / [double]$pts[$i - 1].ms, 2) })
+    $span = [math]::Log([double]$pts[-1].n / [double]$pts[0].n, 2)
+    # The last two steps: the largest, least noisy times, and the closest to the growth at maxN.
+    $topDt = $dt[$m - 2] + $dt[$m - 1]
+    $topDn = [math]::Log([double]$pts[-1].n / [double]$pts[$m - 2].n, 2)
+    $err = @{}; $topErr = @{}
     foreach ($l in $labels) {
-        # Scaled in log space, as it is scored. A linear least-squares scale follows the largest n, where
-        # cache misses slow every step, and that slowdown then reads as an extra log n (O(n) as O(n log n)).
-        $logs = @(foreach ($p in $pts) { [math]::Log([double]$p.ms / (Get-LcComplexityShape $l ([double]$p.n))) })
-        $mean = ($logs | Measure-Object -Average).Average
-        $score = 0.0
-        foreach ($r in $logs) { $score += ($r - $mean) * ($r - $mean) }
-        # Labels go from simple to complex; a more complex one must halve the error to win. Cache effects
-        # make the cost per step creep up with n, which fits the next label up about as well (a coin toss).
-        if ($null -eq $best -or $score -lt $best.Score * 0.5 - 1e-12) { $best = @{ Label = $l; Score = $score } }
+        $f = @(foreach ($p in $pts) { if ($l -eq 'O(2^n)') { [double]$p.n } else { Get-LcComplexityShape $l ([double]$p.n) } })
+        $err[$l] = [double]::MaxValue
+        # A fixed cost per call (a result vector, a memset table, a design constructor): t = c * (k + f(n)), k up
+        # to 99% of the smallest size's time. Without it that cost flattens the small sizes, and O(n) reads as
+        # O(log n) or O(1), O(n^2) as O(n).
+        foreach ($q in 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.98, 0.99) {
+            if ($l -eq 'O(2^n)') {
+                # Any base: a Fibonacci-like recursion grows as 1.6^n. Rate per unit of n: the median step's.
+                $rates = @(@(for ($i = 1; $i -le $m; $i++) { $dt[$i - 1] / ($f[$i] - $f[$i - 1]) }) | Sort-Object)
+                $b = $rates[[int][math]::Floor($m / 2 - 0.5)]
+                $dm = @(for ($i = 1; $i -le $m; $i++) { $b * ($f[$i] - $f[$i - 1]) })
+            } else {
+                $k = $q / (1 - $q) * $f[0]
+                $dm = @(for ($i = 1; $i -le $m; $i++) { [math]::Log(($k + $f[$i]) / ($k + $f[$i - 1]), 2) })
+            }
+            $e = 0.0
+            for ($i = 0; $i -lt $m; $i++) { $e += [math]::Abs($dt[$i] - $dm[$i]) }
+            # Per doubling of n, so the margins below don't depend on how many sizes ran.
+            $e /= $span
+            if ($e -lt $err[$l]) { $err[$l] = $e; $topErr[$l] = [math]::Abs($topDt - $dm[$m - 2] - $dm[$m - 1]) / $topDn }
+            if ($l -eq 'O(1)' -or $l -eq 'O(2^n)') { break }
+        }
+    }
+    # The best fit wins, unless a simpler label is within 0.04 per doubling of it, or within 0.1 and fits the
+    # last two steps at least as well. Cache creep makes O(n) fit O(n log n) about as well; at the largest
+    # sizes a real O(n) is flat again and a real O(n log n) still grows (measured: a cyclic sort's steps are
+    # 2.13x below its cache step and 2.0x at the top; std::sort's 2.13x at the top). Comparing with the best
+    # fit, not the label before, keeps a simple label from winning while it fits worse than all the others.
+    $best = $labels[0]
+    foreach ($l in $labels) { if ($err[$l] -lt $err[$best]) { $best = $l } }
+    $label = $best
+    foreach ($l in $labels) {
+        if ($l -eq $best) { break }
+        if ($err[$l] -le $err[$best] + 0.04 -or ($err[$l] -le $err[$best] + 0.1 -and $topErr[$l] -le $topErr[$best])) { $label = $l; break }
     }
     # The estimate grows from the largest measured size, so it keeps the cache slowdown seen there.
-    $coef = [double]$top.ms / (Get-LcComplexityShape $best.Label ([double]$top.n))
-    return [pscustomobject]@{ Label = $best.Label; Coef = $coef; TooFast = $false }
+    $coef = [double]$pts[-1].ms / (Get-LcComplexityShape $label ([double]$pts[-1].n))
+    return [pscustomobject]@{ Label = $label; Coef = $coef; TooFast = $false; TooFew = $false }
 }
 
 function Get-LcEstimateMs {
