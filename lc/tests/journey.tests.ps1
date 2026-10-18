@@ -73,6 +73,13 @@
         Assert-True ((Limit-LcText ('x' * 250)).EndsWith('...')) 'a cut value ends in ...'
         Assert-Equal (Limit-LcText 'abc') 'abc'
         Assert-Equal (Limit-LcText ('y' * 200)) ('y' * 200) 'exactly 200 is kept'
+        # An emoji (a surrogate pair) across the cut is left out whole; one that fits is kept whole.
+        $emoji = [char]::ConvertFromUtf32(0x1F600)
+        Assert-Equal (Limit-LcText (('a' * 196) + $emoji + ('b' * 10))) (('a' * 196) + '...') 'no half emoji'
+        Assert-Equal (Limit-LcText (('a' * 195) + $emoji + ('b' * 10))) (('a' * 195) + $emoji + '...') 'a whole emoji is kept'
+        Write-LcEvent -Root (Join-Path $tmp 'emojiroot') -Event note -Slug 'e' -File 'e.cpp' -SrcHash $h -Data @{ text = (Limit-LcText (('a' * 196) + $emoji + ('b' * 10))) }
+        $bytes = [IO.File]::ReadAllBytes((Join-Path (Join-Path $tmp 'emojiroot') 'events.jsonl'))
+        Assert-True (-not ([BitConverter]::ToString($bytes)).Contains('EF-BF-BD')) 'no U+FFFD in events.jsonl'
         Assert-True ($null -eq (Save-LcSnapshot -Root $sr -Slug $s -SrcPath $src -SrcHash $h -Ts '2026-10-17T10:01:00+05:30'))
         Assert-Equal @(Get-ChildItem (Join-Path $sr "snapshots\$s") -Filter *.cpp).Count 1
         $p2 = Save-LcSnapshot -Root $sr -Slug $s -SrcPath $src -SrcHash 'ffffffffffff' -Ts '2026-10-17T10:02:00+05:30'
@@ -170,36 +177,72 @@
         $st = @([IO.File]::ReadAllLines((Join-Path $ar 'journey.md')) | Select-Object -Skip 2 | ForEach-Object { if ($_ -match '/\) \| ([a-z ]+) \| ') { $Matches[1] } })
         Assert-Equal ($st -join ',') 'accepted,attempted,passed locally'
 
-        # Status order (spec): rows for one slug starting 2026-10-01, built on a given day
+        # Status order (spec): rows for one slug starting 2026-10-01 10:00 +05:30, one event a minute, built
+        # at midnight +05:30 of a given day (so the 7-day rule reads the same in every machine timezone).
+        # 'kind@time' sets the time: an accepted event's submitted_at (its ts stays the time it was found),
+        # any other event's ts. An accepted event without one has submitted_at = its ts.
         $sr2 = Join-Path $tmp 'statusroot'
         $statusOf = {
             param([string[]]$Kinds, [string]$Now = '2026-10-03', [bool]$Tracked = $false)
             $slug = 'st-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+            $nowDt = [DateTimeOffset]::Parse("${Now}T00:00:00+05:30", $inv).LocalDateTime
             $i = 0
-            foreach ($k in $Kinds) {
+            foreach ($spec in $Kinds) {
                 $i++
+                $k, $when = $spec -split '@', 2
+                $ts = '2026-10-01T10:{0:00}:00+05:30' -f ($i - 1)
                 $data = @{}
                 if ($k -eq 'test_run') { $data = @{ compile_ok = $true } }
                 if ($k -eq 'solved') { $data = @{ attempts = 1; max_ms = 0.01 } }
-                if ($k -eq 'accepted') { $data = @{ submitted_at = '2026-10-01T10:30:00+05:30' } }
-                Write-LcEvent -Root $sr2 -Event $k -Slug $slug -File "$slug.cpp" -SrcHash $h -Ts ('2026-10-01T10:{0:00}:00+05:30' -f ($i - 1)) -Data $data
+                if ($k -eq 'accepted') { $data = @{ submitted_at = $ts }; if ($when) { $data.submitted_at = $when } }
+                elseif ($when) { $ts = $when }
+                Write-LcEvent -Root $sr2 -Event $k -Slug $slug -File "$slug.cpp" -SrcHash $h -Ts $ts -Data $data
             }
             $st = (Get-LcJourneyState @(Read-LcEvents $sr2 -Slug $slug))[$slug]
-            $row = Format-LcJourneyRow $slug $st $nm $Tracked ([datetime]$Now)
+            $row = Format-LcJourneyRow $slug $st $nm $Tracked $nowDt
             Assert-True ($row -match '/\) \| ([a-z ]+) \| ') "no status in: $row"
-            Assert-Equal (Get-LcProblemStatus $st $Tracked ([datetime]$Now)) $Matches[1] 'Format-LcJourneyRow uses Get-LcProblemStatus'
+            Assert-Equal (Get-LcProblemStatus $st $Tracked $nowDt) $Matches[1] 'Format-LcJourneyRow uses Get-LcProblemStatus'
             return $Matches[1]
         }
         Assert-Equal (& $statusOf @('test_run')) 'attempted'
         Assert-Equal (& $statusOf @('test_run') '2026-10-09') 'failed'
         Assert-Equal (& $statusOf @('test_run') '2026-10-08') 'attempted' '7 days not yet over'
+        Assert-Equal (& $statusOf @('test_run') '2026-10-08' $true) 'attempted' '7 days not yet over (tracked)'
         Assert-Equal (& $statusOf @('test_run', 'solved') '2026-10-09' $false) 'passed locally' 'no username: a local pass never fails'
         Assert-Equal (& $statusOf @('test_run', 'solved') '2026-10-09' $true) 'failed'
         Assert-Equal (& $statusOf @('test_run', 'solved') '2026-10-03' $true) 'passed locally'
+        # Decided: a first local pass after day 7 reads "passed locally" again (no username); failed sticks
+        # only after a solution, or while 7 days have passed with no pass yet.
+        Assert-Equal (& $statusOf @('test_run') '2026-10-10') 'failed' 'day 9, never passed'
+        Assert-Equal (& $statusOf @('test_run', 'solved@2026-10-12T10:00:00+05:30') '2026-10-13') 'passed locally' 'a first pass after day 7'
+        Assert-Equal (& $statusOf @('test_run', 'solution', 'solved@2026-10-12T10:00:00+05:30') '2026-10-13') 'failed' 'a solution sticks'
         Assert-Equal (& $statusOf @('test_run', 'hint', 'accepted')) 'accepted with hints'
         Assert-Equal (& $statusOf @('test_run', 'accepted', 'hint')) 'accepted'
         Assert-Equal (& $statusOf @('test_run', 'solution', 'accepted')) 'failed'
+        Assert-Equal (& $statusOf @('test_run', 'solution')) 'failed'
         Assert-Equal (& $statusOf @('test_run', 'solved', 'accepted') '2026-10-20' $true) 'accepted' 'an accept beats the 7-day rule'
+        # A solution after the first accept (asked for a better version) leaves it accepted.
+        Assert-Equal (& $statusOf @('test_run', 'solved', 'accepted', 'solution')) 'accepted'
+        Assert-Equal (& $statusOf @('test_run', 'solved', 'accepted', 'hint', 'solution') '2026-10-20' $true) 'accepted'
+        # An accept found by a later run: help is matched to submitted_at, not to when it was found.
+        # Pass 10:01, accept 10:01:30, hint 10:02, found at 10:03 (and the other order by time: hint first).
+        Assert-Equal (& $statusOf @('test_run', 'solved', 'hint', 'accepted@2026-10-01T10:01:30+05:30')) 'accepted'
+        Assert-Equal (& $statusOf @('test_run', 'solved', 'solution', 'accepted@2026-10-01T10:01:30+05:30')) 'accepted'
+        Assert-Equal (& $statusOf @('test_run', 'solved', 'hint', 'accepted@2026-10-01T10:02:30+05:30')) 'accepted with hints'
+        Assert-Equal (& $statusOf @('test_run', 'solved', 'solution', 'accepted@2026-10-01T10:02:30+05:30')) 'failed'
+        # Times compare across offsets: 04:32 UTC is 10:02 +05:30, after the 10:01:30 accept.
+        Assert-Equal (& $statusOf @('test_run', 'solved', 'hint@2026-10-01T04:32:00+00:00', 'accepted@2026-10-01T10:01:30+05:30')) 'accepted'
+        # The earliest accept counts, in whatever order the accepted events were found.
+        Assert-Equal (& $statusOf @('test_run', 'solved', 'hint', 'accepted@2026-10-01T10:30:00+05:30', 'accepted@2026-10-01T10:01:30+05:30')) 'accepted'
+        # Unreadable times fall back to file order.
+        Assert-Equal (& $statusOf @('test_run', 'accepted@bad', 'hint@bad')) 'accepted'
+        Assert-Equal (& $statusOf @('test_run', 'hint@bad', 'accepted')) 'accepted with hints'
+        # AcceptedAt is the submission time, not the time it was found.
+        $ac = 'st-acceptedat'
+        Write-LcEvent -Root $sr2 -Event test_run -Slug $ac -File "$ac.cpp" -SrcHash $h -Ts '2026-10-01T10:00:00+05:30' -Data @{ compile_ok = $true }
+        Write-LcEvent -Root $sr2 -Event accepted -Slug $ac -File "$ac.cpp" -SrcHash $h -Ts '2026-10-02T09:00:00+05:30' -Data @{ submitted_at = '2026-10-01T10:30:00+05:30' }
+        $st = (Get-LcJourneyState @(Read-LcEvents $sr2 -Slug $ac))[$ac]
+        Assert-Equal $st.AcceptedAt ([DateTimeOffset]::Parse('2026-10-01T10:30:00+05:30', $inv).LocalDateTime) 'AcceptedAt from submitted_at'
 
         # Get-LcUserFile / Test-LcAcceptsTracked
         $oldUf = $env:LC_USER_FILE

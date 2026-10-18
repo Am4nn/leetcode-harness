@@ -5,10 +5,13 @@ $script:LcJourneyDsaRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 function New-LcUtf8 { New-Object Text.UTF8Encoding $false }
 
-# Cuts a value to $Max characters: the first Max-3, then '...'.
+# Cuts a value to $Max characters: the first Max-3, then '...'. A surrogate pair (an emoji) is never
+# cut in half, or the UTF-8 writer would turn the lone half into U+FFFD.
 function Limit-LcText([string]$Text, [int]$Max = 200) {
     if ($Text.Length -le $Max) { return $Text }
-    return $Text.Substring(0, $Max - 3) + '...'
+    $k = $Max - 3
+    if ($k -gt 0 -and [char]::IsHighSurrogate($Text[$k - 1])) { $k-- }
+    return $Text.Substring(0, $k) + '...'
 }
 
 # The LeetCode username file: $env:LC_USER_FILE (self-tests), else .zed/leetcode-user.txt (git-ignored).
@@ -160,31 +163,49 @@ function Save-LcSnapshot([string]$Root, [string]$Slug, [string]$SrcPath, [string
 }
 
 # One pass over the events: per slug (in order of first event), what its journey.md row needs.
+# An accepted event is written when a later run finds the accept, so its time is submitted_at (else ts),
+# and the earliest one is the first accept. A hint or solution counts only when it came before that
+# time; when either time can't be read, it counts when it came before the first accepted event in the file.
 function Get-LcJourneyState($Events) {
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    $at = { param($s) try { [DateTimeOffset]::Parse([string]$s, $inv) } catch { $null } }
     $by = [ordered]@{}
     foreach ($e in @($Events)) {
         $slug = [string]$e.slug
         $r = $by[$slug]
         if ($null -eq $r) {
             $r = @{ Runs = 0; Since = 0; Solved = $null; Accepted = $false; AcceptedAt = $null; Hint = $false; Solution = $false
-                    First = $null; Cx = ''; Note = ''; Fetch = $null }
+                    First = $null; Cx = ''; Note = ''; Fetch = $null; AcceptedOff = $null; Help = (New-Object Collections.ArrayList) }
             $by[$slug] = $r
-            try { $r.First = [DateTimeOffset]::Parse([string]$e.ts, [Globalization.CultureInfo]::InvariantCulture).LocalDateTime } catch { }
+            $t = & $at $e.ts
+            if ($null -ne $t) { $r.First = $t.LocalDateTime }
         }
         switch ([string]$e.event) {
             'test_run'    { $r.Runs++; $r.Since++ }
             'solved'      { $r.Since = 0; if ($null -eq $r.Solved) { $r.Solved = $e } }
             'accepted'    {
-                if (-not $r.Accepted) {
-                    try { $r.AcceptedAt = [DateTimeOffset]::Parse([string]$e.ts, [Globalization.CultureInfo]::InvariantCulture).LocalDateTime } catch { }
-                }
+                $t = $null
+                if ($e.submitted_at) { $t = & $at $e.submitted_at }
+                if ($null -eq $t) { $t = & $at $e.ts }
+                if ($null -ne $t -and ($null -eq $r.AcceptedOff -or $t -lt $r.AcceptedOff)) { $r.AcceptedOff = $t }
                 $r.Accepted = $true
             }
-            'hint'        { if (-not $r.Accepted) { $r.Hint = $true } }  # a hint after the first accept doesn't count
-            'solution'    { $r.Solution = $true }
+            { $_ -eq 'hint' -or $_ -eq 'solution' } {
+                [void]$r.Help.Add(@{ Kind = [string]$e.event; T = (& $at $e.ts); Early = (-not $r.Accepted) })
+            }
             'analyze_run' { if ($e.complexity) { $r.Cx = [string]$e.complexity } }  # a failed analyze has none
             'note'        { $r.Note = [string]$e.text }
             'fetch'       { if ($e.ok -eq $true) { $r.Fetch = $e } }
+        }
+    }
+    foreach ($r in $by.Values) {
+        if ($null -ne $r.AcceptedOff) { $r.AcceptedAt = $r.AcceptedOff.LocalDateTime }
+        foreach ($x in $r.Help) {
+            if (-not $r.Accepted) { $before = $true }
+            elseif ($null -ne $r.AcceptedOff -and $null -ne $x.T) { $before = $x.T -lt $r.AcceptedOff }
+            else { $before = $x.Early }
+            if (-not $before) { continue }  # help after the first accept doesn't count
+            if ($x.Kind -eq 'hint') { $r.Hint = $true } else { $r.Solution = $true }
         }
     }
     return $by
@@ -192,9 +213,9 @@ function Get-LcJourneyState($Events) {
 
 # A problem's status (docs/2026-10-18-coach-design.md), computed on demand and never stored. $State is one
 # slug's entry from Get-LcJourneyState; it reads these fields:
-#   Solution (bool)   a solution event exists
+#   Solution (bool)   a solution event came before the first accept (any, when not accepted)
 #   Accepted (bool)   LeetCode accepted it
-#   Hint (bool)       a hint event came before the first accept
+#   Hint (bool)       a hint event came before the first accept (any, when not accepted)
 #   First (datetime)  the slug's first event, or $null
 #   Solved            the first solved event, or $null (passed locally)
 # $AcceptsTracked: a LeetCode username is set, so a missing accept counts against the problem.

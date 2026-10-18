@@ -85,6 +85,16 @@
         $row = @($rows | Where-Object { $_.Contains('/problems/c-compile/') })[0]
         Assert-Match $row '\| failed \|'
         Assert-Match (@($rows | Where-Object { $_.Contains('/problems/a-ok/') })[0]) '\| accepted \|'
+
+        # A window with exactly one tag still prints "== By tag" (PS 5.1 unrolls a one-item result).
+        [IO.File]::WriteAllText((Join-Path $journey 'problems\d-dp.json'), '{"questionFrontendId":"70","title":"d-dp","difficulty":"Easy","topicTags":[{"name":"Dynamic Programming"}]}', $utf8)
+        Add-Ev 'test_run' 'd-dp' '2026-10-12T10:00:00+05:30' @{ compile_ok = $true; cases = $pass; passed = 1; failed = 0 }
+        $r = Invoke-Stats @('-Since', '2026-10-12', '-Now', '2026-10-12T12:00:00+05:30')
+        $lines = @($r.Out -split "\r?\n")
+        Assert-True ($lines -contains '== By tag') "one tag: missing section`n$($r.Out)"
+        Assert-True ($lines -contains 'Dynamic Programming: 1 problems, accepted 0, with hints 0, passed locally 0, attempted 1, failed 0') "one tag line`n$($r.Out)"
+        $j = (Invoke-Stats @('-Since', '2026-10-12', '-Json', '-Now', '2026-10-12T12:00:00+05:30')).Out | ConvertFrom-Json
+        Assert-Equal @($j.tags).Count 1 'one tag in JSON'
     } finally {
         $env:LC_USER_FILE = $oldUf
         Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

@@ -76,8 +76,9 @@ function Get-StatsMean($List) {
     if (-not $l.Count) { return $null }
     return [Math]::Round((($l | Measure-Object -Sum).Sum) / $l.Count, 1)
 }
-# Weakest first: the most problems not yet accepted.
-$tags = @(foreach ($t in $byTag.Values) {
+# Weakest first: the most problems not yet accepted. The outer @() keeps one tag an array (PS 5.1
+# unrolls a single pipeline result, and a lone object has no .Count).
+$tags = @(@(foreach ($t in $byTag.Values) {
     $c = $t.Counts
     [pscustomobject][ordered]@{
         tag = $t.Tag
@@ -85,7 +86,7 @@ $tags = @(foreach ($t in $byTag.Values) {
         accepted = [int]$c['accepted']; with_hints = [int]$c['accepted with hints']; passed_locally = [int]$c['passed locally']
         attempted = [int]$c['attempted']; failed = [int]$c['failed']; avg_runs_to_pass = (Get-StatsMean $t.Runs)
     }
-}) | Sort-Object @{ e = { $_.problems - $_.accepted - $_.with_hints }; Descending = $true }, @{ e = { $_.tag } }
+}) | Sort-Object @{ e = { $_.problems - $_.accepted - $_.with_hints }; Descending = $true }, @{ e = { $_.tag } })
 
 # Mistakes: one record per bad run, grouped by what went wrong; examples are the 3 most recent.
 $wrong = @(); $crash = @(); $compile = @()
