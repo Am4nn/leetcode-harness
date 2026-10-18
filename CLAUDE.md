@@ -5,10 +5,11 @@ I practice LeetCode in C++ here. Use my files to answer questions about my solut
 ## Where things are
 - `leetcode-solves/<slug>.cpp`: my solutions.
 - `cases/<slug>/cases.txt`: test cases. `cases/<slug>/brute.cpp` is an optional brute force.
-- `journey/events.jsonl`: every run, with attempts, pass/fail, timings, complexity results, notes and LeetCode accepts.
-- `journey/journey.md`: one row per problem: status, difficulty, tags, complexity, attempts, note.
+- `journey/events.jsonl`: every run, with pass/fail, each failing case's input, expected and got, compile errors, crashes, timings, complexity results, notes, LeetCode accepts, and the hints, solutions and reviews you gave.
+- `journey/journey.md`: one row per problem: status, difficulty, tags, complexity, attempts, note. Status is `accepted`, `accepted with hints`, `passed locally`, `attempted` or `failed` (solution shown, or no pass or accept within 7 days).
 - `journey/problems/<slug>.json`: the problem from LeetCode, including statement, tags and constraints.
-- `journey/snapshots/<slug>/`: earlier versions of a solution.
+- `journey/snapshots/<slug>/`: every version of a solution I ran, named `<time>-<src_hash>.cpp`, so a run's `src_hash` finds its code.
+- `journey/local/`: your memory about me and the weekly reads. Git-ignored, never pushed.
 - `build/runs/`: my last 50 runs from Zed (F7, Shift+F7, Ctrl+F7, Alt+F7, Alt+F8). Each run has the full terminal output and a copy of the source as it ran. Read them through the context command below.
 
 ## Load context first
@@ -49,11 +50,41 @@ Pattern: <name>.  Related: <2-3 problems with the same pattern that aren't in jo
   - Never score below 5 for something LeetCode accepted.
 - Merge points that share a cause. Leave out pure style nits.
 
-**Patterns and progress:** answer from my data in `journey/`: tags, attempts, notes, what I avoid. Don't answer from general advice.
+**Patterns and progress:** answer from my data: run `powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc-stats.ps1` (`-Since yyyy-MM-dd` for a window) and read the memory. Don't answer from general advice.
 
 **Check before claiming.** When a claim about my code can be tested, run it instead of guessing. Use a temp journey and no commit, so the check doesn't count as one of my attempts:
 `powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc.ps1 -Mode test -NoWait -NoOpen -NoCommit -JourneyRoot $env:TEMP\lc-ask leetcode-solves\<slug>.cpp`
 (`-Mode analyze` gives complexity and TLE risk.) Without `-LogRun` the check isn't logged, so it doesn't replace my latest run.
+
+## Records and memory
+Run these as `powershell -NoProfile -ExecutionPolicy Bypass -File .zed\lc-coach.ps1 <command> ...`. Each prints one line; none of them commit.
+- **Record what you gave:**
+  - after each hint from the hint ladder: `hint -Slug <slug>`;
+  - after showing the full solution: `solution -Slug <slug>`;
+  - after a review: `review -Slug <slug> -Score N -Label <Poor|Fair|Good|Great> -Pattern "<name>"`.
+
+  Debug help ("why did it fail", "line 15") is not a hint; don't record it.
+- **Memory.** `lc-context.ps1` prints it under "Memory", so you always see it.
+  - Save facts with `remember -Kind <habit|strength|style|goal|preference|context> -Text "<one line>" -Evidence <slug:ref>,...`, where ref is a snapshot file name, an event ts or `chat`.
+  - Pass `-Replaces <id>` when a fact changes, and `-Until yyyy-MM-dd` for a dated goal.
+  - `memory` lists the facts. `forget -Id`, `edit -Id -Text` and `resolve -Id` change them.
+- **When to save,** and only then:
+  - after a review;
+  - after showing a solution;
+  - when `lc-context.ps1` lists a solve under "Solves the coach hasn't read". Read that problem's snapshots in order, with its test_run failures: what each failed version got wrong and what fixed it. Then run `read -Slug <slug>`.
+- **What to save:** lasting facts only.
+  - A mistake I made in 2 or more problems is a `habit`; name the problems.
+  - A clear trait of how I write code is a `style`.
+  - Something I handle well, with evidence, is a `strength`.
+  - Goals and preferences only when I state them.
+
+  Don't save one-off slips, scores, or anything I asked you to forget. After saving, tell me in one line what you saved.
+- When I say "remember …", save it with `-Source user`. When I say "forget that", run `forget` on that fact.
+- **Weekly read,** only when I ask how my week went:
+  - run `lc-stats.ps1 -Since <this Monday>` and read the memory;
+  - write at most 180 words: what went well, what slipped, and one thing to focus on, each backed by numbers or problems;
+  - save it with `weekly -Text "<the read>"`.
+- **What to work on.** Describe how I've been doing. Suggest what to focus on only when I ask, and base it on my `goal` facts and stats.
 
 ## How to write
 - Put the answer in the first sentence. Keep it short, in plain words, and pitch it at someone learning.

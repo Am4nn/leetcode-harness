@@ -108,13 +108,15 @@ Everything lands in `journey/`:
 - `snapshots/<slug>/`: a copy of the solution each time it changes, so you can see it go from brute force to optimal.
 - `problems/<slug>.json`: the problem's title, difficulty, tags and examples as fetched from LeetCode, so runs work offline.
 
-Status is `accepted` once LeetCode has accepted a submission, `passed locally` when every local case passed, and `attempted` otherwise. To get `accepted`, put your LeetCode username (from `leetcode.com/u/<username>`) in `.zed/leetcode-user.txt`. The file is git-ignored, and each run then reads your public list of recent accepts, with no login. A run prints `LeetCode accepted: <slug>` when it finds a new one.
+Status is `accepted` once LeetCode has accepted a submission (`accepted with hints` if the coach gave hints first), `passed locally` when every local case passed, and `attempted` otherwise. It becomes `failed` when the coach showed you the solution, or when 7 days pass without a pass or, with a username set, an accept. To get `accepted`, put your LeetCode username (from `leetcode.com/u/<username>`) in `.zed/leetcode-user.txt`. The file is git-ignored, and each run then reads your public list of recent accepts, with no login. A run prints `LeetCode accepted: <slug>` when it finds a new one.
 
 Every Alt+F7 run where all cases pass commits the solution, `cases/<slug>/` and `journey/`: `solve: <slug>` for a new version, `pass: <slug>` for a rerun. It then pushes in the background; if you're offline, the next push catches up.
 
 ## Asking a coding agent
 
 `CLAUDE.md` tells a coding agent how to coach you here: hints before answers, reviews in a fixed format, and claims checked by running your code. Every run from a Zed key also saves its terminal output and a copy of the source to `build/runs/`, which keeps the last 50 and is git-ignored. The agent reads these with `.zed/lc-context.ps1`, so you can ask "why did that Alt+F7 fail" or "what's wrong at line 15" without pasting anything.
+
+The agent also records the hints, solutions and review scores it gives you, and keeps a memory about you: mistakes you repeat, strengths, coding style and goals, each with the problems behind it. The memory and weekly reads are in `journey/local/`, which is git-ignored. `.zed/lc-stats.ps1` counts results per tag, mistakes by kind, complexity changes and the review score trend. The agent uses it to answer "what's my weakness" or "how did my week go".
 
 ## Speed
 
