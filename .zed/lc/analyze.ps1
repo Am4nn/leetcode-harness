@@ -171,8 +171,9 @@ function Get-LcComplexityShape([string]$label, [double]$n) {
 
 function Get-LcComplexity {
     param($Points)
-    # Noise floor: 0.002 ms, 20 ticks of the 100 ns timer.
-    $pts = @(@($Points) | Where-Object { $_.ms -ge 0.002 })
+    # Noise floor: 0.05 us. Calls under 1 ms are timed in batches of ~1 ms (lc-run.h), so per-call
+    # times well below one 100 ns timer tick are still real; only near-empty calls are dropped.
+    $pts = @(@($Points) | Where-Object { $_.ms -ge 0.00005 })
     if ($pts.Count -lt 3) { return [pscustomobject]@{ Label = 'too fast to measure'; Coef = 0.0; TooFast = $true } }
     $maxN = ($pts | ForEach-Object { [double]$_.n } | Measure-Object -Maximum).Maximum
     $labels = @('O(1)', 'O(log n)', 'O(n)', 'O(n log n)', 'O(n^2)', 'O(n^3)')

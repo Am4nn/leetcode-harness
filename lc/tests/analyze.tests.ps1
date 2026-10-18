@@ -55,8 +55,9 @@
     Assert-Equal (Get-LcComplexity (& $pts 10000, 20000, 40000, 80000 { param($n) 1e-5 * $n })).Label 'O(n)'
     Assert-Equal (Get-LcComplexity (& $pts 10000, 20000, 40000, 80000 { param($n) 1e-6 * $n * [math]::Log($n, 2) })).Label 'O(n log n)'
     Assert-Equal (Get-LcComplexity (& $pts 10, 14, 18, 22, 26, 30 { param($n) 1e-6 * [math]::Pow(2, $n) })).Label 'O(2^n)'
-    Assert-True (Get-LcComplexity (& $pts 1000, 2000, 4000, 8000 { param($n) 1e-7 * $n })).TooFast
-    # The noise floor is 0.002 ms (20 ticks of the 100 ns timer): 0.01-0.08 ms points still get a fit.
+    Assert-True (Get-LcComplexity (& $pts 1000, 2000, 4000, 8000 { param($n) 1e-9 * $n })).TooFast
+    # The noise floor is 0.05 us (batched timing): move-zeroes at n <= 1e4 (0.1-4.9 us) gets a fit.
+    Assert-Equal (Get-LcComplexity @(@{ n = 78; ms = 0.0001 }, @{ n = 625; ms = 0.0004 }, @{ n = 2500; ms = 0.0012 }, @{ n = 10000; ms = 0.0049 })).Label 'O(n)'
     Assert-Equal (Get-LcComplexity (& $pts 10000, 20000, 40000, 80000 { param($n) 1e-6 * $n })).Label 'O(n)'
 
     $fit = Get-LcComplexity (& $pts 1000, 2000, 4000, 8000 { param($n) 1e-6 * $n * $n })
