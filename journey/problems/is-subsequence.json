@@ -1,0 +1,24 @@
+{
+    "questionFrontendId":  "392",
+    "title":  "Is Subsequence",
+    "titleSlug":  "is-subsequence",
+    "difficulty":  "Easy",
+    "isPaidOnly":  false,
+    "topicTags":  [
+                      {
+                          "name":  "Two Pointers"
+                      },
+                      {
+                          "name":  "String"
+                      },
+                      {
+                          "name":  "Dynamic Programming"
+                      }
+                  ],
+    "metaData":  "{ \r\n  \"name\": \"isSubsequence\",\r\n  \"params\": [\r\n    { \r\n      \"name\": \"s\",\r\n      \"type\": \"string\"\r\n    },\r\n    { \r\n      \"name\": \"t\",\r\n      \"type\": \"string\"\r\n    }\r\n  ],\r\n  \"return\": {\r\n    \"type\": \"boolean\"\r\n  }\r\n}",
+    "exampleTestcaseList":  [
+                                "\"abc\"\n\"ahbgdc\"",
+                                "\"axc\"\n\"ahbgdc\""
+                            ],
+    "content":  "\u003cp\u003eGiven two strings \u003ccode\u003es\u003c/code\u003e and \u003ccode\u003et\u003c/code\u003e, return \u003ccode\u003etrue\u003c/code\u003e\u003cem\u003e if \u003c/em\u003e\u003ccode\u003es\u003c/code\u003e\u003cem\u003e is a \u003cstrong\u003esubsequence\u003c/strong\u003e of \u003c/em\u003e\u003ccode\u003et\u003c/code\u003e\u003cem\u003e, or \u003c/em\u003e\u003ccode\u003efalse\u003c/code\u003e\u003cem\u003e otherwise\u003c/em\u003e.\u003c/p\u003e\n\n\u003cp\u003eA \u003cstrong\u003esubsequence\u003c/strong\u003e of a string is a new string that is formed from the original string by deleting some (can be none) of the characters without disturbing the relative positions of the remaining characters. (i.e., \u003ccode\u003e\u0026quot;ace\u0026quot;\u003c/code\u003e is a subsequence of \u003ccode\u003e\u0026quot;\u003cu\u003ea\u003c/u\u003eb\u003cu\u003ec\u003c/u\u003ed\u003cu\u003ee\u003c/u\u003e\u0026quot;\u003c/code\u003e while \u003ccode\u003e\u0026quot;aec\u0026quot;\u003c/code\u003e is not).\u003c/p\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 1:\u003c/strong\u003e\u003c/p\u003e\n\u003cpre\u003e\u003cstrong\u003eInput:\u003c/strong\u003e s = \"abc\", t = \"ahbgdc\"\n\u003cstrong\u003eOutput:\u003c/strong\u003e true\n\u003c/pre\u003e\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 2:\u003c/strong\u003e\u003c/p\u003e\n\u003cpre\u003e\u003cstrong\u003eInput:\u003c/strong\u003e s = \"axc\", t = \"ahbgdc\"\n\u003cstrong\u003eOutput:\u003c/strong\u003e false\n\u003c/pre\u003e\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong\u003eConstraints:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cul\u003e\n\t\u003cli\u003e\u003ccode\u003e0 \u0026lt;= s.length \u0026lt;= 100\u003c/code\u003e\u003c/li\u003e\n\t\u003cli\u003e\u003ccode\u003e0 \u0026lt;= t.length \u0026lt;= 10\u003csup\u003e4\u003c/sup\u003e\u003c/code\u003e\u003c/li\u003e\n\t\u003cli\u003e\u003ccode\u003es\u003c/code\u003e and \u003ccode\u003et\u003c/code\u003e consist only of lowercase English letters.\u003c/li\u003e\n\u003c/ul\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cstrong\u003eFollow up:\u003c/strong\u003e Suppose there are lots of incoming \u003ccode\u003es\u003c/code\u003e, say \u003ccode\u003es\u003csub\u003e1\u003c/sub\u003e, s\u003csub\u003e2\u003c/sub\u003e, ..., s\u003csub\u003ek\u003c/sub\u003e\u003c/code\u003e where \u003ccode\u003ek \u0026gt;= 10\u003csup\u003e9\u003c/sup\u003e\u003c/code\u003e, and you want to check one by one to see if \u003ccode\u003et\u003c/code\u003e has its subsequence. In this scenario, how would you change your code?"
+}
