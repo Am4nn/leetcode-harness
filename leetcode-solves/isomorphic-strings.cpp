@@ -11,7 +11,7 @@ public:
       auto it = mappings.find(s[i]);
 
       if (it == mappings.end()) {
-        if (visited.find(it->second) != visited.end()) {
+        if (visited.find(t[i]) != visited.end()) {
           return false;
         }
         mappings[s[i]] = t[i];
