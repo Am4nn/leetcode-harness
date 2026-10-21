@@ -1,0 +1,22 @@
+{
+    "questionFrontendId":  "125",
+    "title":  "Valid Palindrome",
+    "titleSlug":  "valid-palindrome",
+    "difficulty":  "Easy",
+    "isPaidOnly":  false,
+    "topicTags":  [
+                      {
+                          "name":  "Two Pointers"
+                      },
+                      {
+                          "name":  "String"
+                      }
+                  ],
+    "metaData":  "{ \r\n  \"name\": \"isPalindrome\",\r\n  \"params\": [\r\n    {\r\n      \"name\": \"s\",\r\n      \"type\": \"string\"\r\n    }\r\n  ],\r\n  \"return\": {\r\n    \"type\": \"boolean\"\r\n  }\r\n}",
+    "exampleTestcaseList":  [
+                                "\"A man, a plan, a canal: Panama\"",
+                                "\"race a car\"",
+                                "\" \""
+                            ],
+    "content":  "\u003cp\u003eA phrase is a \u003cstrong\u003epalindrome\u003c/strong\u003e if, after converting all uppercase letters into lowercase letters and removing all non-alphanumeric characters, it reads the same forward and backward. Alphanumeric characters include letters and numbers.\u003c/p\u003e\n\n\u003cp\u003eGiven a string \u003ccode\u003es\u003c/code\u003e, return \u003ccode\u003etrue\u003c/code\u003e\u003cem\u003e if it is a \u003cstrong\u003epalindrome\u003c/strong\u003e, or \u003c/em\u003e\u003ccode\u003efalse\u003c/code\u003e\u003cem\u003e otherwise\u003c/em\u003e.\u003c/p\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 1:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e s = \u0026quot;A man, a plan, a canal: Panama\u0026quot;\n\u003cstrong\u003eOutput:\u003c/strong\u003e true\n\u003cstrong\u003eExplanation:\u003c/strong\u003e \u0026quot;amanaplanacanalpanama\u0026quot; is a palindrome.\n\u003c/pre\u003e\n\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 2:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e s = \u0026quot;race a car\u0026quot;\n\u003cstrong\u003eOutput:\u003c/strong\u003e false\n\u003cstrong\u003eExplanation:\u003c/strong\u003e \u0026quot;raceacar\u0026quot; is not a palindrome.\n\u003c/pre\u003e\n\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 3:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e s = \u0026quot; \u0026quot;\n\u003cstrong\u003eOutput:\u003c/strong\u003e true\n\u003cstrong\u003eExplanation:\u003c/strong\u003e s is an empty string \u0026quot;\u0026quot; after removing non-alphanumeric characters.\nSince an empty string reads the same forward and backward, it is a palindrome.\n\u003c/pre\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong\u003eConstraints:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cul\u003e\n\t\u003cli\u003e\u003ccode\u003e1 \u0026lt;= s.length \u0026lt;= 2 * 10\u003csup\u003e5\u003c/sup\u003e\u003c/code\u003e\u003c/li\u003e\n\t\u003cli\u003e\u003ccode\u003es\u003c/code\u003e consists only of printable ASCII characters.\u003c/li\u003e\n\u003c/ul\u003e\n"
+}
