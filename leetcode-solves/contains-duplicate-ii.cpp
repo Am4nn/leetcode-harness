@@ -1,23 +1,16 @@
 class Solution {
 public:
   bool containsNearbyDuplicate(vector<int> &nums, int k) {
-    unordered_map<int, vector<int>> kv;
+    unordered_map<int, int> lastSeenIndex;
 
     for (int i = 0; i < (int)nums.size(); ++i) {
-      kv[nums[i]].push_back(i);
+      if (lastSeenIndex.find(nums[i]) != lastSeenIndex.end() &&
+          i - lastSeenIndex[nums[i]] <= k) {
+        return true;
+      }
+      lastSeenIndex[nums[i]] = i;
     }
 
-    for (auto pair : kv) {
-      if (pair.second.size() <= 1) {
-        continue;
-      }
-
-      for (int i = 1; i < (int)pair.second.size(); ++i) {
-        if (pair.second[i] - pair.second[i - 1] <= k) {
-          return true;
-        }
-      }
-    }
     return false;
   }
 };
