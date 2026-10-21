@@ -1,0 +1,25 @@
+{
+    "questionFrontendId":  "219",
+    "title":  "Contains Duplicate II",
+    "titleSlug":  "contains-duplicate-ii",
+    "difficulty":  "Easy",
+    "isPaidOnly":  false,
+    "topicTags":  [
+                      {
+                          "name":  "Array"
+                      },
+                      {
+                          "name":  "Hash Table"
+                      },
+                      {
+                          "name":  "Sliding Window"
+                      }
+                  ],
+    "metaData":  "{\r\n  \"name\": \"containsNearbyDuplicate\",\r\n  \"params\": [\r\n    {\r\n      \"name\": \"nums\",\r\n      \"type\": \"integer[]\"\r\n    },\r\n    {\r\n      \"name\": \"k\",\r\n      \"type\": \"integer\"\r\n    }\r\n  ],\r\n  \"return\": {\r\n    \"type\": \"boolean\"\r\n  }\r\n}",
+    "exampleTestcaseList":  [
+                                "[1,2,3,1]\n3",
+                                "[1,0,1,1]\n1",
+                                "[1,2,3,1,2,3]\n2"
+                            ],
+    "content":  "\u003cp\u003eGiven an integer array \u003ccode\u003enums\u003c/code\u003e and an integer \u003ccode\u003ek\u003c/code\u003e, return \u003ccode\u003etrue\u003c/code\u003e \u003cem\u003eif there are two \u003cstrong\u003edistinct indices\u003c/strong\u003e \u003c/em\u003e\u003ccode\u003ei\u003c/code\u003e\u003cem\u003e and \u003c/em\u003e\u003ccode\u003ej\u003c/code\u003e\u003cem\u003e in the array such that \u003c/em\u003e\u003ccode\u003enums[i] == nums[j]\u003c/code\u003e\u003cem\u003e and \u003c/em\u003e\u003ccode\u003eabs(i - j) \u0026lt;= k\u003c/code\u003e.\u003c/p\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 1:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e nums = [1,2,3,1], k = 3\n\u003cstrong\u003eOutput:\u003c/strong\u003e true\n\u003c/pre\u003e\n\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 2:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e nums = [1,0,1,1], k = 1\n\u003cstrong\u003eOutput:\u003c/strong\u003e true\n\u003c/pre\u003e\n\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 3:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e nums = [1,2,3,1,2,3], k = 2\n\u003cstrong\u003eOutput:\u003c/strong\u003e false\n\u003c/pre\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong\u003eConstraints:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cul\u003e\n\t\u003cli\u003e\u003ccode\u003e1 \u0026lt;= nums.length \u0026lt;= 10\u003csup\u003e5\u003c/sup\u003e\u003c/code\u003e\u003c/li\u003e\n\t\u003cli\u003e\u003ccode\u003e-10\u003csup\u003e9\u003c/sup\u003e \u0026lt;= nums[i] \u0026lt;= 10\u003csup\u003e9\u003c/sup\u003e\u003c/code\u003e\u003c/li\u003e\n\t\u003cli\u003e\u003ccode\u003e0 \u0026lt;= k \u0026lt;= 10\u003csup\u003e5\u003c/sup\u003e\u003c/code\u003e\u003c/li\u003e\n\u003c/ul\u003e\n"
+}
