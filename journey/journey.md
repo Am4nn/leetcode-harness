@@ -6,5 +6,5 @@
 | 2026-10-18 | 122 | [Best Time to Buy and Sell Stock II](https://leetcode.com/problems/best-time-to-buy-and-sell-stock-ii/) | accepted | Medium | Array, Dynamic Programming, Greedy | O(n) | 0.01 ms | 1 |  |
 | 2026-10-18 | 41 | [First Missing Positive](https://leetcode.com/problems/first-missing-positive/) | accepted | Hard | Array, Hash Table | O(n log n) | 0.01 ms | 2 | Tough - cyclic placement logic |
 | - | 31 | [Next Permutation](https://leetcode.com/problems/next-permutation/) | attempted | Medium | Array, Two Pointers |  |  | 2 |  |
-| 2026-10-21 | 392 | [Is Subsequence](https://leetcode.com/problems/is-subsequence/) | passed locally | Easy | Two Pointers, String, Dynamic Programming | O(1) | 0.01 ms | 1 |  |
+| 2026-10-21 | 392 | [Is Subsequence](https://leetcode.com/problems/is-subsequence/) | accepted | Easy | Two Pointers, String, Dynamic Programming | O(1) | 0.01 ms | 1 |  |
 | 2026-10-21 | 125 | [Valid Palindrome](https://leetcode.com/problems/valid-palindrome/) | passed locally | Easy | Two Pointers, String |  | 0.01 ms | 5 |  |
