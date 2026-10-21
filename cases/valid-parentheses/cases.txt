@@ -1,0 +1,24 @@
+# Valid Parentheses (#20, Easy) https://leetcode.com/problems/valid-parentheses/
+Constraints:
+1 <= s.length <= 10^4
+s consists of parentheses only '()[]{}'.
+
+Example 1:
+Input: s = "()"
+Output: true
+
+Example 2:
+Input: s = "()[]{}"
+Output: true
+
+Example 3:
+Input: s = "(]"
+Output: false
+
+Example 4:
+Input: s = "([])"
+Output: true
+
+Example 5:
+Input: s = "([)]"
+Output: false
