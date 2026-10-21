@@ -11,4 +11,4 @@
 | 2026-10-21 | 205 | [Isomorphic Strings](https://leetcode.com/problems/isomorphic-strings/) | accepted | Easy | Hash Table, String |  | 0.02 ms | 1 |  |
 | 2026-10-21 | 219 | [Contains Duplicate II](https://leetcode.com/problems/contains-duplicate-ii/) | accepted | Easy | Array, Hash Table, Sliding Window |  | 0.03 ms | 1 |  |
 | 2026-10-22 | 303 | [Range Sum Query - Immutable](https://leetcode.com/problems/range-sum-query-immutable/) | accepted | Easy | Array, Design, Prefix Sum |  | 0.01 ms | 2 |  |
-| 2026-10-22 | 20 | [Valid Parentheses](https://leetcode.com/problems/valid-parentheses/) | passed locally | Easy | String, Stack, Bracket Sequences |  | 0.01 ms | 1 |  |
+| 2026-10-22 | 20 | [Valid Parentheses](https://leetcode.com/problems/valid-parentheses/) | accepted | Easy | String, Stack, Bracket Sequences |  | 0.01 ms | 1 |  |
