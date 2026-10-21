@@ -1,0 +1,13 @@
+# Range Sum Query - Immutable (#303, Easy) https://leetcode.com/problems/range-sum-query-immutable/
+Constraints:
+1 <= nums.length <= 10^4
+-10^5 <= nums[i] <= 10^5
+0 <= left <= right < nums.length
+At most 10^4 calls will be made to sumRange.
+
+Example 1:
+Input
+["NumArray","sumRange","sumRange","sumRange"]
+[[[-2,0,3,-5,2,-1]],[0,2],[2,5],[0,5]]
+Output
+[null, 1, -1, -3]

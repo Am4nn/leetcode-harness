@@ -10,3 +10,4 @@
 | 2026-10-21 | 125 | [Valid Palindrome](https://leetcode.com/problems/valid-palindrome/) | accepted | Easy | Two Pointers, String |  | 0.01 ms | 5 |  |
 | 2026-10-21 | 205 | [Isomorphic Strings](https://leetcode.com/problems/isomorphic-strings/) | accepted | Easy | Hash Table, String |  | 0.02 ms | 1 |  |
 | 2026-10-21 | 219 | [Contains Duplicate II](https://leetcode.com/problems/contains-duplicate-ii/) | accepted | Easy | Array, Hash Table, Sliding Window |  | 0.03 ms | 1 |  |
+| 2026-10-22 | 303 | [Range Sum Query - Immutable](https://leetcode.com/problems/range-sum-query-immutable/) | accepted | Easy | Array, Design, Prefix Sum |  | 0.01 ms | 2 |  |

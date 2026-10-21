@@ -1,0 +1,23 @@
+{
+    "questionFrontendId":  "303",
+    "title":  "Range Sum Query - Immutable",
+    "titleSlug":  "range-sum-query-immutable",
+    "difficulty":  "Easy",
+    "isPaidOnly":  false,
+    "topicTags":  [
+                      {
+                          "name":  "Array"
+                      },
+                      {
+                          "name":  "Design"
+                      },
+                      {
+                          "name":  "Prefix Sum"
+                      }
+                  ],
+    "metaData":  "{\n  \"classname\": \"NumArray\",\n  \"maxbytesperline\": 135000,\n  \"constructor\": {\n    \"params\": [\n      {\n        \"type\": \"integer[]\",\n        \"name\": \"nums\"\n      },\n      {\n        \"type\": \"integer\",\n        \"name\": \"numsSize\",\n        \"lang\": \"c\",\n        \"value\": \"size_1\"\n      }\n    ]\n  },\n  \"methods\": [\n    {\n      \"name\": \"sumRange\",\n      \"params\": [\n        {\n          \"type\": \"integer\",\n          \"name\": \"left\"\n        },\n        {\n          \"type\": \"integer\",\n          \"name\": \"right\"\n        }\n      ],\n      \"return\": {\n        \"type\": \"integer\"\n      }\n    }\n  ],\n  \"systemdesign\": true,\n  \"params\": [\n    {\n      \"name\": \"inputs\",\n      \"type\": \"integer[]\"\n    },\n    {\n      \"name\": \"inputs\",\n      \"type\": \"integer[]\"\n    }\n  ],\n  \"return\": {\n    \"type\": \"list\u003cString\u003e\",\n    \"dealloc\": true\n  }\n}",
+    "exampleTestcaseList":  [
+                                "[\"NumArray\",\"sumRange\",\"sumRange\",\"sumRange\"]\n[[[-2,0,3,-5,2,-1]],[0,2],[2,5],[0,5]]"
+                            ],
+    "content":  "\u003cp\u003eGiven an integer array \u003ccode\u003enums\u003c/code\u003e, handle multiple queries of the following type:\u003c/p\u003e\n\n\u003col\u003e\n\t\u003cli\u003eCalculate the \u003cstrong\u003esum\u003c/strong\u003e of the elements of \u003ccode\u003enums\u003c/code\u003e between indices \u003ccode\u003eleft\u003c/code\u003e and \u003ccode\u003eright\u003c/code\u003e \u003cstrong\u003einclusive\u003c/strong\u003e where \u003ccode\u003eleft \u0026lt;= right\u003c/code\u003e.\u003c/li\u003e\n\u003c/ol\u003e\n\n\u003cp\u003eImplement the \u003ccode\u003eNumArray\u003c/code\u003e class:\u003c/p\u003e\n\n\u003cul\u003e\n\t\u003cli\u003e\u003ccode\u003eNumArray(int[] nums)\u003c/code\u003e Initializes the object with the integer array \u003ccode\u003enums\u003c/code\u003e.\u003c/li\u003e\n\t\u003cli\u003e\u003ccode\u003eint sumRange(int left, int right)\u003c/code\u003e Returns the \u003cstrong\u003esum\u003c/strong\u003e of the elements of \u003ccode\u003enums\u003c/code\u003e between indices \u003ccode\u003eleft\u003c/code\u003e and \u003ccode\u003eright\u003c/code\u003e \u003cstrong\u003einclusive\u003c/strong\u003e (i.e. \u003ccode\u003enums[left] + nums[left + 1] + ... + nums[right]\u003c/code\u003e).\u003c/li\u003e\n\u003c/ul\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 1:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cpre\u003e\n\u003cstrong\u003eInput\u003c/strong\u003e\n[\u0026quot;NumArray\u0026quot;, \u0026quot;sumRange\u0026quot;, \u0026quot;sumRange\u0026quot;, \u0026quot;sumRange\u0026quot;]\n[[[-2, 0, 3, -5, 2, -1]], [0, 2], [2, 5], [0, 5]]\n\u003cstrong\u003eOutput\u003c/strong\u003e\n[null, 1, -1, -3]\n\n\u003cstrong\u003eExplanation\u003c/strong\u003e\nNumArray numArray = new NumArray([-2, 0, 3, -5, 2, -1]);\nnumArray.sumRange(0, 2); // return (-2) + 0 + 3 = 1\nnumArray.sumRange(2, 5); // return 3 + (-5) + 2 + (-1) = -1\nnumArray.sumRange(0, 5); // return (-2) + 0 + 3 + (-5) + 2 + (-1) = -3\n\u003c/pre\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong\u003eConstraints:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cul\u003e\n\t\u003cli\u003e\u003ccode\u003e1 \u0026lt;= nums.length \u0026lt;= 10\u003csup\u003e4\u003c/sup\u003e\u003c/code\u003e\u003c/li\u003e\n\t\u003cli\u003e\u003ccode\u003e-10\u003csup\u003e5\u003c/sup\u003e \u0026lt;= nums[i] \u0026lt;= 10\u003csup\u003e5\u003c/sup\u003e\u003c/code\u003e\u003c/li\u003e\n\t\u003cli\u003e\u003ccode\u003e0 \u0026lt;= left \u0026lt;= right \u0026lt; nums.length\u003c/code\u003e\u003c/li\u003e\n\t\u003cli\u003eAt most \u003ccode\u003e10\u003csup\u003e4\u003c/sup\u003e\u003c/code\u003e calls will be made to \u003ccode\u003esumRange\u003c/code\u003e.\u003c/li\u003e\n\u003c/ul\u003e\n"
+}
