@@ -8,4 +8,4 @@
 | - | 31 | [Next Permutation](https://leetcode.com/problems/next-permutation/) | attempted | Medium | Array, Two Pointers |  |  | 2 |  |
 | 2026-10-21 | 392 | [Is Subsequence](https://leetcode.com/problems/is-subsequence/) | accepted | Easy | Two Pointers, String, Dynamic Programming | O(1) | 0.01 ms | 1 |  |
 | 2026-10-21 | 125 | [Valid Palindrome](https://leetcode.com/problems/valid-palindrome/) | accepted | Easy | Two Pointers, String |  | 0.01 ms | 5 |  |
-| 2026-10-21 | 205 | [Isomorphic Strings](https://leetcode.com/problems/isomorphic-strings/) | passed locally | Easy | Hash Table, String |  | 0.02 ms | 1 |  |
+| 2026-10-21 | 205 | [Isomorphic Strings](https://leetcode.com/problems/isomorphic-strings/) | accepted | Easy | Hash Table, String |  | 0.02 ms | 1 |  |
