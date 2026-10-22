@@ -22,12 +22,17 @@ if ($LogRun) { Start-LcRunLog -Key @{ run = 'F7'; input = 'Shift+F7'; check = 'C
 # g++ with its messages in the terminal; through Write-Host when the run is logged, so the log has them too.
 function Invoke-Gpp([string[]]$GppArgs) {
     if (-not $script:LcRunLog) { & $Gpp @GppArgs; return }
-    & $Gpp @GppArgs 2>&1 | ForEach-Object {
-        $line = "$_"
-        if ($line -match ': error: ') { Write-Host $line -ForegroundColor Red }
-        elseif ($line -match ': warning: ') { Write-Host $line -ForegroundColor Yellow }
-        else { Write-Host $line }
-    }
+    # Piped, g++'s UTF-8 (its bullets) is decoded with the console's code page: read it as UTF-8 instead.
+    $enc = [Console]::OutputEncoding
+    try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false } catch {}
+    try {
+        & $Gpp @GppArgs 2>&1 | ForEach-Object {
+            $line = "$_"
+            if ($line -match ': error: ') { Write-Host $line -ForegroundColor Red }
+            elseif ($line -match ': warning: ') { Write-Host $line -ForegroundColor Yellow }
+            else { Write-Host $line }
+        }
+    } finally { try { [Console]::OutputEncoding = $enc } catch {} }
 }
 
 $name = [IO.Path]::GetFileNameWithoutExtension($src)

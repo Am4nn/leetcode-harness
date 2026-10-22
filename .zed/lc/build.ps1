@@ -26,12 +26,12 @@ function Get-LcFlavorFlags([string]$Flavor) {
 
 # Extra compile flags for the user translation unit (and its PCH) only. Profile: only the user's own
 # functions call lc-prof.h's hooks. Excluded by file: only the toolchain's headers (GCC canonicalizes
-# their paths to C:/msys64/ucrt64/include/... and .../ucrt64/lib/gcc/...) and the prelude (TreeNode/ListNode),
-# so a solution under any folder (lc/, build/, include/) is still counted (R39); by name: the generated
+# their paths to C:/msys64/ucrt64/include/... and .../ucrt64/lib/gcc/...), the prelude (TreeNode/ListNode)
+# and the custom judges (lc-judge.h), so a solution under any folder (lc/, build/, include/) is still counted (R39); by name: the generated
 # lc_user_* hooks.
 function Get-LcUserFlags([string]$Flavor) {
     if ($Flavor -eq 'profile') {
-        return @('-finstrument-functions', '-finstrument-functions-exclude-file-list=ucrt64/include/,ucrt64/lib/gcc/,lc-prelude.h',
+        return @('-finstrument-functions', '-finstrument-functions-exclude-file-list=ucrt64/include/,ucrt64/lib/gcc/,lc-prelude.h,lc-judge.h',
                  '-finstrument-functions-exclude-function-list=lc_user_')
     }
     return @()
@@ -124,6 +124,9 @@ function Start-LcGpp([string[]]$Arguments) {
     $psi.CreateNoWindow = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
+    # g++ writes UTF-8 (its bullets, quotes in a UTF-8 source); the default would be the console's code page.
+    $psi.StandardOutputEncoding = New-Object Text.UTF8Encoding $false
+    $psi.StandardErrorEncoding = New-Object Text.UTF8Encoding $false
     $quoted = foreach ($a in $Arguments) {
         if ($a -eq '' -or $a -match '[\s"]') { '"' + ($a -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"' } else { $a }
     }

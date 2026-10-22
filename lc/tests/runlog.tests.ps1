@@ -229,6 +229,16 @@
         $log = (Get-Logs)[-1]
         Assert-Match $log.Name '-lc-runlog-twice-ctrl-f7\.log$'
         Assert-Match ([IO.File]::ReadAllText($log.FullName)) "error: 'undefined_name' was not declared"
+
+        # g++'s UTF-8 bullets (U+2022, before overload candidates) survive a console on code page 437, as
+        # Zed's terminal is. The code page is set in a child, whose run-cpp then shares that console.
+        [IO.File]::WriteAllText($progSrc, "struct A { A(int) {} };`nint main() { A a(1, 2); }`n", $utf8)
+        $probe = Join-Path $prog 'cp437.ps1'
+        [IO.File]::WriteAllText($probe, ("[Console]::OutputEncoding = [Text.Encoding]::GetEncoding(437)`n" +
+            "`$null = '' | powershell -NoProfile -ExecutionPolicy Bypass -File '$runCpp' -Mode check -LogRun '$progSrc' 2>&1 | Out-String`n"), $utf8)
+        $null = powershell -NoProfile -ExecutionPolicy Bypass -File $probe 2>&1 | Out-String
+        $text = [IO.File]::ReadAllText((Get-Logs)[-1].FullName, $utf8)
+        Assert-True ($text -match [char]0x2022 -and $text -notmatch [char]0x0393) "runlog: g++ bullets garbled in the log`n$text"
     } finally {
         $env:LC_RUNS_ROOT = $oldRuns; $env:LC_BUILD_ROOT = $oldBuildRoot
         Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue

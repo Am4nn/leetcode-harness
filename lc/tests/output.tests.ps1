@@ -57,6 +57,22 @@
     Assert-Equal (& $show (Format-LcGppDiagnostics "${sol}:3:1: error: bad")) 'error|sol.cpp line 3: bad'
     Assert-Equal @(Format-LcGppDiagnostics '').Count 0
 
+    # g++ writes UTF-8 (U+2022 bullets before overload candidates); a console on an old code page (437 in
+    # Zed's terminal) must not garble them. Runs in its own process so the code page change stays there.
+    $enc = Join-Path ([IO.Path]::GetTempPath()) ('lcenc-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force $enc | Out-Null
+    try {
+        [IO.File]::WriteAllText("$enc\bad.cpp", "struct A { A(int) {} };`nint main() { A a(1, 2); }`n")
+        [IO.File]::WriteAllText("$enc\probe.ps1", @(
+            '[Console]::OutputEncoding = [Text.Encoding]::GetEncoding(437)'
+            ". '$repo\.zed\common.ps1'; . '$repo\.zed\lc\build.ps1'"
+            "`$r = Wait-LcGpp (Start-LcGpp @('-fsyntax-only', '$enc\bad.cpp'))"
+            'if ($r.Text -match [char]0x2022) { ''bullet'' } elseif ($r.Text -match [char]0x0393) { ''garbled'' } else { ''none'' }'
+        ) -join "`n")
+        $got = (powershell -NoProfile -ExecutionPolicy Bypass -File "$enc\probe.ps1" 2>&1 | Out-String).Trim()
+        Assert-Equal $got 'bullet' 'g++ output is read as UTF-8 whatever the console code page'
+    } finally { Remove-Item -Recurse -Force -LiteralPath $enc -ErrorAction SilentlyContinue }
+
     # Growth table: at most 5 points (smallest, largest, 3 evenly by index), two aligned rows.
     $pts = @(195, 390, 781, 1562, 3125, 6250, 12500, 25000, 50000, 100000 | ForEach-Object { @{ n = $_; ms = $_ * 6e-7 } })
     Assert-Equal (@(Select-LcShownPoints $pts | ForEach-Object { $_.n }) -join ',') '195,781,6250,25000,100000'
