@@ -1,0 +1,28 @@
+{
+    "questionFrontendId":  "141",
+    "title":  "Linked List Cycle",
+    "titleSlug":  "linked-list-cycle",
+    "difficulty":  "Easy",
+    "isPaidOnly":  false,
+    "topicTags":  [
+                      {
+                          "name":  "Hash Table"
+                      },
+                      {
+                          "name":  "Linked List"
+                      },
+                      {
+                          "name":  "Two Pointers"
+                      },
+                      {
+                          "name":  "Floyd\u0027s Cycle Finding Algorithm"
+                      }
+                  ],
+    "metaData":  "{\n  \"name\": \"hasCycle\",\n  \"params\": [\n    {\n      \"name\": \"head\",\n      \"type\": \"ListNode\"\n    },\n    {\n      \"name\": \"pos\",\n      \"type\": \"integer\"\n    }\n  ],\n  \"return\": {\n    \"type\": \"boolean\"\n  },\n  \"manual\": true,\n  \"languages\": [\n    \"cpp\",\n    \"java\",\n    \"python\",\n    \"c\",\n    \"csharp\",\n    \"javascript\",\n    \"ruby\",\n    \"swift\",\n    \"golang\",\n    \"python3\",\n    \"scala\",\n    \"kotlin\",\n    \"php\",\n    \"typescript\"\n  ]\n}",
+    "exampleTestcaseList":  [
+                                "[3,2,0,-4]\n1",
+                                "[1,2]\n0",
+                                "[1]\n-1"
+                            ],
+    "content":  "\u003cp\u003eGiven \u003ccode\u003ehead\u003c/code\u003e, the head of a linked list, determine if the linked list has a cycle in it.\u003c/p\u003e\n\n\u003cp\u003eThere is a cycle in a linked list if there is some node in the list that can be reached again by continuously following the\u0026nbsp;\u003ccode\u003enext\u003c/code\u003e\u0026nbsp;pointer. Internally, \u003ccode\u003epos\u003c/code\u003e\u0026nbsp;is used to denote the index of the node that\u0026nbsp;tail\u0026#39;s\u0026nbsp;\u003ccode\u003enext\u003c/code\u003e\u0026nbsp;pointer is connected to.\u0026nbsp;\u003cstrong\u003eNote that\u0026nbsp;\u003ccode\u003epos\u003c/code\u003e\u0026nbsp;is not passed as a parameter\u003c/strong\u003e.\u003c/p\u003e\n\n\u003cp\u003eReturn\u0026nbsp;\u003ccode\u003etrue\u003c/code\u003e\u003cem\u003e if there is a cycle in the linked list\u003c/em\u003e. Otherwise, return \u003ccode\u003efalse\u003c/code\u003e.\u003c/p\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 1:\u003c/strong\u003e\u003c/p\u003e\n\u003cimg alt=\"\" src=\"https://assets.leetcode.com/uploads/2018/12/07/circularlinkedlist.png\" style=\"width: 300px; height: 97px; margin-top: 8px; margin-bottom: 8px;\" /\u003e\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e head = [3,2,0,-4], pos = 1\n\u003cstrong\u003eOutput:\u003c/strong\u003e true\n\u003cstrong\u003eExplanation:\u003c/strong\u003e There is a cycle in the linked list, where the tail connects to the 1st node (0-indexed).\n\u003c/pre\u003e\n\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 2:\u003c/strong\u003e\u003c/p\u003e\n\u003cimg alt=\"\" src=\"https://assets.leetcode.com/uploads/2018/12/07/circularlinkedlist_test2.png\" style=\"width: 141px; height: 74px;\" /\u003e\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e head = [1,2], pos = 0\n\u003cstrong\u003eOutput:\u003c/strong\u003e true\n\u003cstrong\u003eExplanation:\u003c/strong\u003e There is a cycle in the linked list, where the tail connects to the 0th node.\n\u003c/pre\u003e\n\n\u003cp\u003e\u003cstrong class=\"example\"\u003eExample 3:\u003c/strong\u003e\u003c/p\u003e\n\u003cimg alt=\"\" src=\"https://assets.leetcode.com/uploads/2018/12/07/circularlinkedlist_test3.png\" style=\"width: 45px; height: 45px;\" /\u003e\n\u003cpre\u003e\n\u003cstrong\u003eInput:\u003c/strong\u003e head = [1], pos = -1\n\u003cstrong\u003eOutput:\u003c/strong\u003e false\n\u003cstrong\u003eExplanation:\u003c/strong\u003e There is no cycle in the linked list.\n\u003c/pre\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong\u003eConstraints:\u003c/strong\u003e\u003c/p\u003e\n\n\u003cul\u003e\n\t\u003cli\u003eThe number of the nodes in the list is in the range \u003ccode\u003e[0, 10\u003csup\u003e4\u003c/sup\u003e]\u003c/code\u003e.\u003c/li\u003e\n\t\u003cli\u003e\u003ccode\u003e-10\u003csup\u003e5\u003c/sup\u003e \u0026lt;= Node.val \u0026lt;= 10\u003csup\u003e5\u003c/sup\u003e\u003c/code\u003e\u003c/li\u003e\n\t\u003cli\u003e\u003ccode\u003epos\u003c/code\u003e is \u003ccode\u003e-1\u003c/code\u003e or a \u003cstrong\u003evalid index\u003c/strong\u003e in the linked-list.\u003c/li\u003e\n\u003c/ul\u003e\n\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u003cstrong\u003eFollow up:\u003c/strong\u003e Can you solve it using \u003ccode\u003eO(1)\u003c/code\u003e (i.e. constant) memory?\u003c/p\u003e\n"
+}

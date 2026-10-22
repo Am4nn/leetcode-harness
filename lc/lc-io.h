@@ -3,6 +3,8 @@
 #ifndef LC_IO_H
 #define LC_IO_H
 
+#include "lc-judge.h"
+
 namespace lc {
 
 struct ParseError : std::runtime_error {
@@ -156,6 +158,14 @@ template <class T> T Reader::read() {
         return t[0];
     } else if constexpr (std::is_same_v<T, std::string>) {
         return str();
+    } else if constexpr (std::is_same_v<T, JudgeText>) {
+        // The rest of the text, unquoted, as LeetCode prints a judge's verdict.
+        skip_ws();
+        size_t e = s.size();
+        while (e > p && std::isspace((unsigned char)s[e - 1])) --e;
+        JudgeText t{std::string(s.substr(p, e - p))};
+        p = s.size();
+        return t;
     } else if constexpr (is_vector_v<T>) {
         T v;
         array([&] { v.push_back(read<typename T::value_type>()); });
@@ -214,6 +224,8 @@ template <class T> std::string show(const T& v) {
         return b;
     } else if constexpr (std::is_same_v<T, std::string>) {
         return "\"" + json_escape(v) + "\"";
+    } else if constexpr (std::is_same_v<T, JudgeText>) {
+        return v.text;
     } else if constexpr (is_vector_v<T>) {
         std::string o = "[";
         bool first = true;

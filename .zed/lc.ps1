@@ -230,8 +230,9 @@ $fromSource = $false
 if ($q) {
     try { $info = Get-LcInfoFromMeta $q.metaData $srcText }
     catch {
-        $t = $_.Exception.Message -replace '^unsupported LeetCode type: ', ''
-        Write-Host "This problem uses a parameter type the harness doesn't support yet: $t" -ForegroundColor Red
+        $t = $_.Exception.Message
+        if ($t -match '^unsupported LeetCode type: (.*)$') { $t = "This problem uses a parameter type the harness doesn't support yet: $($Matches[1])" }
+        Write-Host $t -ForegroundColor Red
         Exit-Lc 1
     }
     if (-not (Test-Path -LiteralPath $testFile)) {

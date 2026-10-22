@@ -23,15 +23,22 @@ function ConvertTo-LcReturnType($ret) {
     return ConvertTo-LcCppType $ret.type
 }
 
+# A metadata parameter list without the ones LeetCode adds for one other language only, such as C's
+# array sizes ({"name":"numsSize","lang":"c"}).
+function Select-LcCppParams($params) {
+    if (-not $params) { return @() }
+    return @(@($params) | Where-Object { -not $_.lang -or $_.lang -eq 'cpp' })
+}
+
 # $srcText (optional) settles the output parameter of a void method when the metadata doesn't name it.
 function Get-LcInfoFromMeta([string]$metaDataJson, [string]$srcText = '') {
     $m = $metaDataJson | ConvertFrom-Json
     if ($m.classname -or $m.systemdesign) {
         $ctor = @()
-        if ($m.constructor -and $m.constructor.params) { $ctor = @($m.constructor.params) }
+        if ($m.constructor) { $ctor = @(Select-LcCppParams $m.constructor.params) }
         $methods = @()
         foreach ($x in @($m.methods)) {
-            $ps = @(); if ($x.params) { $ps = @($x.params) }
+            $ps = @(Select-LcCppParams $x.params)
             $methods += [pscustomobject]@{
                 Name       = [string]$x.name
                 ParamNames = [string[]]@($ps | ForEach-Object { [string]$_.name })
@@ -47,8 +54,23 @@ function Get-LcInfoFromMeta([string]$metaDataJson, [string]$srcText = '') {
             Methods   = $methods
         }
     }
-    $ps = @(); if ($m.params) { $ps = @($m.params) }
+    $ps = @(Select-LcCppParams $m.params)
     $ret = ConvertTo-LcReturnType $m.return
+    $names = [string[]]@($ps | ForEach-Object { [string]$_.name })
+    # A custom judge ("manual"): the inputs build the test. A known judge calls the method itself (its hook
+    # body in Judge); an unknown one only works when the method takes exactly those inputs.
+    $judge = $null
+    if ($m.manual) {
+        $judge = $script:LcJudges["$($m.name)($($names -join ','))"]
+        if ($judge) { $ret = $judge.Return }
+        elseif ($srcText) {
+            $si = Get-LcInfoFromSource $srcText
+            $mine = @(if ($si) { $si.AllMethods | Where-Object { $_.Name -eq $m.name } })
+            if ($mine.Count -and @($mine[0].ParamNames).Count -ne $names.Count) {
+                throw "LeetCode runs $($m.name) with its own judge: its inputs ($($names -join ', ')) build the test, and the harness doesn't know how yet. Test it with F7 and your own main()."
+            }
+        }
+    }
     $out = -1
     if ($m.output -and $null -ne $m.output.paramindex) { $out = [int]$m.output.paramindex }
     elseif ($ret -eq 'void') {
@@ -62,10 +84,28 @@ function Get-LcInfoFromMeta([string]$metaDataJson, [string]$srcText = '') {
     return [pscustomobject]@{
         Kind       = 'function'
         Method     = [string]$m.name
-        ParamNames = [string[]]@($ps | ForEach-Object { [string]$_.name })
+        ParamNames = $names
         ParamTypes = [string[]]@($ps | ForEach-Object { ConvertTo-LcCppType $_.type })
         ReturnType = $ret
         OutParam   = $out
+        Judge      = $judge
+    }
+}
+
+# The custom judges the harness knows (lc/lc-judge.h), by LeetCode's method and input names. Call is the
+# user hook's body: a0.. are the inputs, lc_s the Solution. Return is what the harness compares.
+$script:LcJudges = @{
+    'getIntersectionNode(intersectVal,listA,listB,skipA,skipB)' = @{
+        Return = 'lc::JudgeText'
+        Call   = 'lc::judge::intersection(a0, a1, a2, a3, a4, [&](ListNode* x, ListNode* y) { return lc_s->getIntersectionNode(x, y); })'
+    }
+    'hasCycle(head,pos)' = @{
+        Return = 'bool'
+        Call   = 'lc::judge::cycle(a0, a1, [&](ListNode* h) { return lc_s->hasCycle(h); })'
+    }
+    'detectCycle(head,pos)' = @{
+        Return = 'lc::JudgeText'
+        Call   = 'lc::judge::cycle_entry(a0, a1, [&](ListNode* h) { return lc_s->detectCycle(h); })'
     }
 }
 
@@ -307,6 +347,11 @@ function New-LcUserText {
         $lines += 'void* lc_user_new_solution() { return new Solution; }'
         $lines += 'void lc_user_delete_solution(void* lc_self) { delete static_cast<Solution*>(lc_self); }'
         $methods = @(@{ Name = $Info.Method; Hook = 'lc_user_call'; Types = $Info.ParamTypes; Ret = $Info.ReturnType })
+        if ($Info.Judge) {
+            $lines += '#include "' + ((Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'lc\lc-judge.h') -replace '\\', '/') + '"'
+            $lines += "$($Info.ReturnType) lc_user_call($(Join-LcArgs 'void* lc_self' (New-LcRefParams $Info.ParamTypes 'a'))) { auto* lc_s = static_cast<Solution*>(lc_self); return $($Info.Judge.Call); }"
+            return ($lines -join "`n") + "`n"
+        }
     }
     foreach ($m in $methods) {
         $call = "static_cast<$cls*>(lc_self)->$($m.Name)($(New-LcArgNames @($m.Types).Count 'a'))"

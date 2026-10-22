@@ -92,6 +92,7 @@ Crashes are explained in plain words, e.g. "index out of range" or "stack overfl
 - **Problem shapes:**
   - `void` methods that modify the input, such as rotate-array.
   - Design problems such as LRU Cache: the `["LRUCache","put","get"]` / `[[2],[1,1],[1]]` layout. Analyze reports the cost per call for these.
+  - Problems where LeetCode's own judge builds the input: Intersection of Two Linked Lists (`skipA`/`skipB`) and Linked List Cycle I and II (`pos`). The harness links the lists the same way and prints LeetCode's verdict, such as `Intersected at '8'`. Any other problem of this kind prints a message saying it can't be tested locally.
 - **Comparison:**
   - Answers in any order: when the problem says "in any order", order is ignored at every level of nesting.
   - Doubles are compared within 1e-5.
@@ -157,6 +158,7 @@ build/                    compiled output and runs/ (the run logs); git-ignored
 | Where the journey is written | the `-JourneyRoot` parameter in `.zed/lc.ps1` |
 | Key bindings | `%APPDATA%\Zed\keymap.json` (task names come from `.zed/tasks.json`) |
 | Supported types, parsing, comparison | `lc/lc-io.h` |
+| LeetCode's custom judges (linked list intersection, cycles) | `lc/lc-judge.h`, and the `$LcJudges` table in `.zed/lc/info.ps1` |
 
 After changing the harness, run `powershell -NoProfile -ExecutionPolicy Bypass -File lc\tests\run-all.ps1` and check that every line says PASS.
 

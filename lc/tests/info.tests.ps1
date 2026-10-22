@@ -26,6 +26,42 @@
     $put = $lru.Methods | Where-Object { $_.Name -eq 'put' }
     Assert-Equal ($put.ParamNames -join ',') 'key,value'
 
+    # Parameters LeetCode lists for one other language only (C's array sizes) aren't C++ parameters
+    $numArrayMeta = '{"classname":"NumArray","constructor":{"params":[{"type":"integer[]","name":"nums"},{"type":"integer","name":"numsSize","lang":"c","value":"size_1"}]},"methods":[{"name":"sumRange","params":[{"type":"integer","name":"left"},{"type":"integer","name":"right"},{"type":"integer","name":"extra","lang":"c"}],"return":{"type":"integer"}}],"systemdesign":true}'
+    $na = Get-LcInfoFromMeta $numArrayMeta
+    Assert-Equal ($na.CtorNames -join ',') 'nums' 'info: C-only constructor param skipped'
+    Assert-Equal ($na.CtorTypes -join ',') 'vector<int>'
+    Assert-Equal (($na.Methods | Where-Object { $_.Name -eq 'sumRange' }).ParamNames -join ',') 'left,right' 'info: C-only method param skipped'
+    $cOnly = Get-LcInfoFromMeta '{"name":"f","params":[{"name":"nums","type":"integer[]"},{"name":"numsSize","type":"integer","lang":"c"},{"name":"k","type":"integer","lang":"cpp"}],"return":{"type":"integer"}}'
+    Assert-Equal ($cOnly.ParamNames -join ',') 'nums,k' 'info: C-only function param skipped, a C++-only one kept'
+
+    # A custom judge ("manual": true): the inputs build the test, the harness's judge calls the method
+    $interMeta = '{"name":"getIntersectionNode","params":[{"name":"intersectVal","type":"integer"},{"name":"listA","type":"ListNode"},{"name":"listB","type":"ListNode"},{"name":"skipA","type":"integer"},{"name":"skipB","type":"integer"}],"return":{"type":"ListNode"},"manual":true}'
+    $interSrc = "class Solution {`npublic:`n    ListNode *getIntersectionNode(ListNode *headA, ListNode *headB) { return headA; }`n};`n"
+    $inter = Get-LcInfoFromMeta $interMeta $interSrc
+    Assert-Equal ($inter.ParamNames -join ',') 'intersectVal,listA,listB,skipA,skipB' 'info: judge inputs are the case inputs'
+    Assert-Equal $inter.ReturnType 'lc::JudgeText'
+    Assert-Equal $null (Test-LcMethodMatch $inter $interSrc)
+    $us = New-LcUserText -SrcPath 'C:/x/intersection-of-two-linked-lists.cpp' -Info $inter
+    Assert-Match $us '#include ".*/lc/lc-judge\.h"'
+    Assert-True $us.Contains('lc::JudgeText lc_user_call(void* lc_self, int& a0, ListNode*& a1, ListNode*& a2, int& a3, int& a4) { auto* lc_s = static_cast<Solution*>(lc_self); return lc::judge::intersection(a0, a1, a2, a3, a4, [&](ListNode* x, ListNode* y) { return lc_s->getIntersectionNode(x, y); }); }') $us
+    Assert-True (New-LcHarnessText -Info $inter).Contains('lc::JudgeText call(int& a0, ListNode*& a1, ListNode*& a2, int& a3, int& a4)') 'info: harness returns the verdict'
+    $cyc = Get-LcInfoFromMeta '{"name":"hasCycle","params":[{"name":"head","type":"ListNode"},{"name":"pos","type":"integer"}],"return":{"type":"boolean"},"manual":true}'
+    Assert-Equal $cyc.ReturnType 'bool'
+    Assert-Match (New-LcUserText -SrcPath 'C:/x/linked-list-cycle.cpp' -Info $cyc) 'return lc::judge::cycle\(a0, a1, \[&\]\(ListNode\* h\) \{ return lc_s->hasCycle\(h\); \}\);'
+    $entry = Get-LcInfoFromMeta '{"name":"detectCycle","params":[{"name":"head","type":"ListNode"},{"name":"pos","type":"integer"}],"return":{"type":"ListNode"},"manual":true}'
+    Assert-Equal $entry.ReturnType 'lc::JudgeText'
+    Assert-Match (New-LcUserText -SrcPath 'C:/x/linked-list-cycle-ii.cpp' -Info $entry) 'lc::judge::cycle_entry\(a0, a1, '
+    # An unknown custom judge whose inputs aren't the method's parameters: a clear message, not a compile error
+    $unknown = '{"name":"weird","params":[{"name":"a","type":"integer"},{"name":"b","type":"integer"}],"return":{"type":"integer"},"manual":true}'
+    $msg = ''
+    try { $null = Get-LcInfoFromMeta $unknown "class Solution {`npublic:`n    int weird(int a) { return a; }`n};`n" } catch { $msg = $_.Exception.Message }
+    Assert-Match $msg '^LeetCode runs weird with its own judge'
+    # ... but when the method does take those parameters, it runs as usual
+    Assert-Equal (Get-LcInfoFromMeta $unknown "class Solution {`npublic:`n    int weird(int a, int b) { return a; }`n};`n").Method 'weird'
+    # The plain call stays as it was
+    Assert-True (-not (New-LcUserText -SrcPath 'C:/x/two-sum.cpp' -Info $two).Contains('lc-judge.h')) 'info: no judge include for plain problems'
+
     Assert-Equal (ConvertTo-LcCppType 'integer[][]') 'vector<vector<int>>'
     Assert-Equal (ConvertTo-LcCppType 'list<list<string>>') 'vector<vector<string>>'
     Assert-Equal (ConvertTo-LcCppType 'TreeNode') 'TreeNode*'
